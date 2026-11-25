@@ -40,9 +40,10 @@ function banner() {
   const b = document.createElement('div');
   b.className = 'banner';
   b.id = 'browserBanner';
-  b.innerHTML = '<span>Browser mode: solves run on your computer, inside this page, with the JavaScript engines. '
-    + 'This is slow: a flop solve takes 2 to 6 minutes, and large trees can run out of memory. '
-    + `For full speed and the Rust engine, run it locally with Docker: <code>just up</code> (<a href="${README}" target="_blank" rel="noopener">README</a>)</span>`
+  b.innerHTML = '<span>Browser mode: solves run on your computer, inside this page, with the same engines and trees as local mode. '
+    + 'This is slower: a flop solve takes about 1.5 to 2.5 minutes (local: about 1 minute). '
+    + 'If your browser does not allow threads here, the solve uses one thread and a flop takes about 10 minutes. '
+    + `For full speed, run it locally with Docker: <code>just up</code> (<a href="${README}" target="_blank" rel="noopener">README</a>)</span>`
     + '<button type="button" class="close" title="Close" aria-label="Close">&times;</button>';
   b.querySelector('.close').onclick = () => { store.set(CLOSED, '1'); b.remove(); window.dispatchEvent(new Event('resize')); };
   top.before(b);

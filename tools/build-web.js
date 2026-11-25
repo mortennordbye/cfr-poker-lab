@@ -6,6 +6,9 @@
 //   dist/worker.js    Web Worker entry (public/browser/worker.js)
 //   dist/sw.js        service worker for cross-origin isolation (public/browser/sw.js)
 //   dist/equity.json  lib/equity.json
+//   dist/postflop/    the Rust postflop engine as WebAssembly: worker.js (public/browser/postflop-worker.js), and the
+//                     builds of tools/build-wasm.sh from engines/postflop/rs/target/web/: mt/ (threads), st/ (one thread).
+//                     Without them the site has no 'postflop' engine (postflop-js only) and the build says so.
 //
 // The engines run unchanged. Node-only modules are swapped for their browser versions (ALIAS), and the two Node
 // built-ins they use come from public/browser/ (BUILTIN). Any other built-in stops the build.
@@ -14,11 +17,18 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'dist'));
+const WASM_DIR = path.join(ROOT, 'engines', 'postflop', 'rs', 'target', 'web');
+// WebAssembly builds that are there (a build has its .js glue and its .wasm file).
+const WASM = {};
+for (const v of ['mt', 'st']) {
+  WASM[v] = fs.existsSync(path.join(WASM_DIR, v, 'postflop_engine.js')) && fs.existsSync(path.join(WASM_DIR, v, 'postflop_engine_bg.wasm'));
+}
 
 // Module id (path from the repo root) -> file used in the browser.
 const ALIAS = {
   '/lib/platform.js': 'public/browser/platform.js',
   '/lib/equity-data.js': 'public/browser/equity-data.js',
+  '/engines/postflop/backend.js': 'public/browser/postflop-backend.js',
 };
 const BUILTIN = {
   path: '/public/browser/path.js',
@@ -72,6 +82,8 @@ let bundle = `'use strict';
   if (!g.__cfrBase && g.document && g.document.currentScript) g.__cfrBase = new URL('.', g.document.currentScript.src).href;
   // One thread for 6-max preflop when the page is not cross-origin isolated (no SharedArrayBuffer).
   if (typeof g.SharedArrayBuffer === 'undefined') g.SharedArrayBuffer = ArrayBuffer;
+  // WebAssembly builds of the Rust postflop engine in postflop/ (public/browser/postflop-backend.js).
+  g.__cfrPostflopWasm = ${JSON.stringify(WASM)};
   function load(id) {
     if (cache[id]) return cache[id].exports;
     if (!defs[id]) throw new Error('module not in the bundle: ' + id);
@@ -112,6 +124,20 @@ fs.writeFileSync(path.join(OUT, 'bundle.js'), bundle);
 fs.copyFileSync(path.join(PUB, 'browser', 'worker.js'), path.join(OUT, 'worker.js'));
 fs.copyFileSync(path.join(PUB, 'browser', 'sw.js'), path.join(OUT, 'sw.js'));
 fs.copyFileSync(path.join(ROOT, 'lib', 'equity.json'), path.join(OUT, 'equity.json'));
+if (WASM.mt || WASM.st) {
+  fs.mkdirSync(path.join(OUT, 'postflop'));
+  fs.copyFileSync(path.join(PUB, 'browser', 'postflop-worker.js'), path.join(OUT, 'postflop', 'worker.js'));
+  for (const v of ['mt', 'st']) {
+    if (!WASM[v]) continue;
+    // The glue, the .wasm file and the JS snippets (wasm-bindgen-rayon's worker helper); no TypeScript files.
+    fs.cpSync(path.join(WASM_DIR, v), path.join(OUT, 'postflop', v), { recursive: true, filter: (f) => !f.endsWith('.d.ts') });
+  }
+}
 
 const size = (f) => (fs.statSync(path.join(OUT, f)).size / 1024).toFixed(0) + ' KB';
 console.log(`built ${path.relative(ROOT, OUT) || OUT}: ${ids.length} modules, bundle.js ${size('bundle.js')}, equity.json ${size('equity.json')}`);
+const have = ['mt', 'st'].filter((v) => WASM[v]);
+if (have.length) console.log('postflop WebAssembly: ' + have.map((v) => `${v} ${size(`postflop/${v}/postflop_engine_bg.wasm`)}`).join(', '));
+else console.log('postflop WebAssembly: not built (run tools/build-wasm.sh first); the site uses postflop-js only');
+// CI sets WASM_REQUIRED, so a site without both builds of the Rust engine is never deployed by mistake.
+if (process.env.WASM_REQUIRED && have.length < 2) { console.error('WASM_REQUIRED: both builds (mt, st) are needed'); process.exit(1); }

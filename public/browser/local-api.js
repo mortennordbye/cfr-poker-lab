@@ -1,7 +1,8 @@
 'use strict';
 // In-page stand-in for server.js on the static site (tools/build-web.js, GitHub Pages). It answers the same /api/
-// calls (CONTRACT.md) with the JavaScript engines in Web Workers, through the same job code (lib/solves.js).
-// Not here: the Rust engine 'postflop' and the idle filler (/api/idle answers 404, so the UI hides it).
+// calls (CONTRACT.md) with the engines in Web Workers, through the same job code (lib/solves.js). The Rust engine
+// 'postflop' runs as WebAssembly (public/browser/postflop-backend.js), with the same default trees as local mode.
+// Not here: the idle filler (/api/idle answers 404, so the UI hides it).
 const { createSolves } = require('../../lib/solves');
 const { files } = require('../../lib/platform');
 const { loadEquity } = require('../../lib/equity');
@@ -9,6 +10,8 @@ const pushfold = require('../../engines/pushfold/solver');
 const hu = require('../../engines/hu-preflop');
 const sixmax = require('../../engines/sixmax-preflop');
 const postflopJs = require('../../engines/postflop-js');
+const postflop = require('../../engines/postflop');
+const postflopBackend = require('./postflop-backend');
 
 // Threads per solve: the CPU count, at most 4 (the engines' own limit). 6-max needs SharedArrayBuffer for more
 // than one thread, which needs cross-origin isolation (public/browser/sw.js).
@@ -16,17 +19,36 @@ const THREADS = Math.max(1, Math.min(4, (typeof navigator !== 'undefined' && nav
 const SIX_THREADS = globalThis.crossOriginIsolated ? THREADS : 1;
 // A browser tab has less memory than the server: refuse trees above this size (the engine checks it before it builds).
 const MAX_MEMORY_MB = 2500;
+// WebAssembly (wasm32) memory ends at 4 GB. The tree must fit with room for the rest of the module.
+const WASM_MAX_MEMORY_MB = 3600;
+
+const postflopJsSolve = (p, onProgress) => postflopJs.solve({ threads: THREADS, maxMemoryMB: MAX_MEMORY_MB, ...p }, onProgress);
+
+// Rust engine as WebAssembly: always compressed (16-bit storage, half the memory). If the WebAssembly build cannot
+// load, the solve runs on postflop-js instead (smaller default trees).
+async function postflopSolve(p, onProgress) {
+  try {
+    return await postflop.solve({ compress: true, maxMemoryMB: WASM_MAX_MEMORY_MB, ...p }, onProgress);
+  } catch (e) {
+    if (!e.wasmLoad) throw e;
+    console.warn('postflop (WebAssembly) did not load, using postflop-js:', e.message);
+    if (onProgress) onProgress(0, 'WebAssembly solver not available: using the JavaScript engine');
+    return postflopJsSolve(p, onProgress);
+  }
+}
+const WASM = typeof WebAssembly === 'object' && postflopBackend.variant() !== null;
 
 const engines = {
   'hu-preflop': hu,
+  ...(WASM ? { postflop: { ...postflop, solve: postflopSolve } } : {}),
   'sixmax-preflop': { ...sixmax, solve: (p, onProgress) => sixmax.solve(p, onProgress, { threads: SIX_THREADS }) },
   'postflop-js': {
     ...postflopJs, title: 'Heads-up postflop (JS)',
-    solve: (p, onProgress) => postflopJs.solve({ threads: THREADS, maxMemoryMB: MAX_MEMORY_MB, ...p }, onProgress),
+    solve: postflopJsSolve,
   },
 };
 
-// One solve at a time holds a postflop tree (hundreds of MB to 2 GB in this tab).
+// One finished solve at a time holds a postflop tree (up to 3.6 GB in a worker). Dropping it ends its worker.
 const solves = createSolves({ engines, maxSolves: 3, maxPostflop: 1 });
 
 function num(v, lo, hi, def) {
@@ -66,4 +88,4 @@ async function apiFetch(input, init = {}) {
   return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-module.exports = { fetch: apiFetch, THREADS, SIX_THREADS };
+module.exports = { fetch: apiFetch, THREADS, SIX_THREADS, postflopVariant: postflopBackend.variant };
