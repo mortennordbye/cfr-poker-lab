@@ -137,9 +137,27 @@ data does not have yet; `force` solves everything again.
 The live page shows the precomputed flop reports read-only. Spots: `tools/presets.json`.
 Details: [CONTRACT.md](CONTRACT.md#precomputed-data).
 
+Flop report library (one run per spot, 95 flops each; engine default sizes):
+
+| Preset | Spot |
+| ------ | ---- |
+| `cash100-btn-vs-bb-srp` | 6-max cash 100bb: BTN raises 2.5, BB calls |
+| `cash100-co-vs-bb-srp` | 6-max cash 100bb: CO raises 2.5, BB calls |
+| `cash100-sb-vs-bb-srp` | 6-max cash 100bb: SB raises 3, BB calls |
+| `cash100-utg-vs-bb-srp` | 6-max cash 100bb: UTG raises 2.5, BB calls |
+| `cash100-bb-3bet-vs-btn` | 6-max cash 100bb: BTN raises 2.5, BB 3-bets 10, BTN calls |
+| `cash100-btn-3bet-vs-co` | 6-max cash 100bb: CO raises 2.5, BTN 3-bets 7.5, CO calls |
+| `cash100-sb-3bet-vs-btn` | 6-max cash 100bb: BTN raises 2.5, SB 3-bets 10, BTN calls |
+| `mtt40-btn-vs-bb-srp` | 6-max MTT 40bb, BB ante 1: BTN raises 2.1, BB calls |
+| `mtt25-btn-vs-bb-srp` | 6-max MTT 25bb, BB ante 1: BTN raises 2.1, BB calls |
+| `hu-100bb-srp` | heads-up 100bb: SB raises 2.5, BB calls |
+
 ```sh
 gh workflow run precompute.yml -f job=flop-report -f preset=hu-100bb-srp -f flops=95
 ```
+
+`node tools/presets.test.js` checks that every preset names a heads-up flop terminal and is in the workflow's preset
+list (`--solve` also solves the 6-max spots and prints the reach of each terminal).
 
 ---
 
