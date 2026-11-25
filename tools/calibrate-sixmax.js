@@ -9,7 +9,7 @@
 //   3. Solve each picked terminal on the flop subset (lib/flops.js) with the postflop engine (lib/postflop.js:
 //      the native Rust engine if it exists). Each solve is saved as a sample (lib/realization.js), in the same files
 //      that "Solve flop" in the UI writes. A sample with the current ranges is not solved again, so a stopped run
-//      resumes where it was. Jobs run board by board over all groups, so a run stopped by --budgetMin leaves every
+//      resumes where it was. Jobs run board by board over all groups (boards in round robin over suit textures), so a run stopped by --budgetMin leaves every
 //      group with about the same number of flops.
 //   4. lib/realization.js builds the group table from all samples; the next preflop solve uses it.
 //
@@ -77,13 +77,23 @@ function flopTerminals(sol) {
   return out;
 }
 
+// Board order for the jobs: round robin over suit textures (mono, two-tone, rainbow), each in subset order. A run
+// stopped early then has every suit texture, not only the first boards of the subset.
+function spread(boards) {
+  const by = new Map();
+  for (const b of boards) { const k = RZ.texGroup(b).split('-')[0]; if (!by.has(k)) by.set(k, []); by.get(k).push(b); }
+  const lists = [...by.values()], out = [];
+  for (let i = 0; out.length < boards.length; i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+  return out;
+}
+
 async function pool(items, n, fn) {
   let next = 0;
   await Promise.all(Array.from({ length: Math.max(1, n) }, async () => { while (next < items.length) { const i = next++; await fn(items[i], i); } }));
 }
 
 (async () => {
-  const flops = flopSubset(OPT.flops);
+  const flops = spread(flopSubset(OPT.flops));
   const tStart = Date.now();
   log(`spot ${JSON.stringify(spot)} key ${KEY}; samples in ${RZ.spotDir(KEY)}; ${flops.length} flops, ${OPT.rounds} round(s), ` +
     `${OPT.parallel} parallel solves x ${OPT.threads} threads, target ${OPT.target}% pot${OPT.budgetMin ? `, budget ${OPT.budgetMin} min` : ''}`);
