@@ -143,7 +143,7 @@ value each player's hand as `pot * equity * R`, where `R` = equity realization:
 2. `engines/<kind>/test.js`: runnable with `node engines/<kind>/test.js`, prints checks and exits non-zero on failure.
 3. `engines/<kind>/README.md`: tree, algorithm, simplifications, solve time, known limits (short).
 
-## Realization samples (hu-preflop calibration)
+## Realization samples (hu-preflop and sixmax-preflop calibration)
 
 - A `POST /api/solve` for a postflop engine may carry `params.source = { kind: 'hu-preflop', spotKey, terminalKey }`
   (from `node.terminal.spotKey` / `node.terminal.key` of a hu-preflop flop terminal). The server strips it before the
@@ -155,6 +155,14 @@ value each player's hand as `pot * equity * R`, where `R` = equity realization:
 - Postflop engines used for calibration must give `stats.rootEv = { oop: {combo: ev}, ip: {...} }` (bb won from the
   flop root) and should give `stats.rootEq` (same shape, equity vs the opponent range), plus `solveStats(params)`.
 - `lib/realization.js` builds the table; `tools/calibrate-hu.js` writes the same samples (batch fill).
+- 6-max: `params.source = { kind: 'sixmax-preflop', spotKey, terminalKey, group }` (from `node.terminal.spotKey`,
+  `.key`, `.group` of a heads-up sixmax-preflop flop terminal; `spotKey` = `6max-<hash>`, `key` = node id). The sample is
+  the same file, plus `group`, `oop` and `ip` (positions, e.g. `ev: { BTN: {...}, BB: {...} }`). A group is
+  `<pot type> <IP pos> vs <OOP pos>`, pot type `LIMP` | `SRP` | `3BP` | `4BP` (e.g. `SRP BTN vs BB`).
+  `sample.flops` in the status answer counts the samples of the group, and the answer adds `sample.group`.
+  `buildGroupTable()` pools all terminals of a group; `tools/calibrate-sixmax.js` is the batch fill.
+  6-max flop terminals also carry `terminal.name`, `terminal.mass` (share of all deals that reach it) and
+  `terminal.calibrated`. A `spotKey` must match `[\w-]{1,64}`, else no sample is saved.
 
 | Method | Path | Body | Answer |
 |---|---|---|---|

@@ -38,9 +38,13 @@ function runCuts(core, nodes, myCuts, slots) {
 
 let cutRoot = [];
 
-function setup(P, E, W, nThreads) {
+// calib: [{ group, ip: [169 R], oop: [169 R] }] for the groups with a calibrated table (index.js), or [].
+// Heads-up flop terminals of those groups use the group's share matrices (n.kIp, n.kOop); the others flat R.
+function setup(P, E, W, nThreads, calib = []) {
   const tree = buildTree(P);
   const nodes = tree.nodes;
+  const kind = new Map(calib.map((g, k) => [g.group, 3 + 2 * k]));
+  for (const n of nodes) if (n.group && kind.has(n.group)) { n.kIp = kind.get(n.group); n.kOop = n.kIp + 1; }
   // Work estimate per subtree, used to pick cut points and balance threads.
   const work = new Float64Array(nodes.length);
   for (let i = nodes.length - 1; i >= 0; i--) {
@@ -67,13 +71,13 @@ function setup(P, E, W, nThreads) {
     let t = 0; for (let i = 1; i < nThreads; i++) if (load[i] < load[t]) t = i;
     owner[k] = t; load[t] += work[cuts[k]];
   });
-  return { tree, nodes, cuts, owner, load, total, mats: buildMatrices(E, W, P.rIp, P.rOop) };
+  return { tree, nodes, cuts, owner, load, total, mats: buildMatrices(E, W, P.rIp, P.rOop, calib) };
 }
 
 async function helperMain() {
-  const { P, sab, ctrlSab, index, nThreads, port } = workerData;
+  const { P, sab, ctrlSab, index, nThreads, port, calib } = workerData;
   const { E, W } = await loadEquity();
-  const S = setup(P, E, W, nThreads);
+  const S = setup(P, E, W, nThreads, calib);
   cutRoot = S.cuts;
   const core = new Core(S.tree, P, S.mats);
   const f64 = new Float64Array(sab), ctrl = new Int32Array(ctrlSab);
@@ -102,11 +106,11 @@ async function helperMain() {
 }
 
 async function masterMain() {
-  const { P, threads } = workerData;
+  const { P, threads, calib } = workerData;
   const t0 = Date.now();
   const nThreads = Math.max(1, Math.min(4, threads || 4));
   const { E, W } = await loadEquity();
-  const S = setup(P, E, W, nThreads);
+  const S = setup(P, E, W, nThreads, calib);
   cutRoot = S.cuts;
   const nodes = S.nodes;
   const sab = new SharedArrayBuffer(S.cuts.length * SLOT * 8);
@@ -119,7 +123,7 @@ async function masterMain() {
   const helpers = [], ports = [];
   for (let i = 1; i < nThreads; i++) {
     const ch = new MessageChannel();
-    helpers.push(new Worker(__filename, { workerData: { role: 'helper', P, sab, ctrlSab, index: i, nThreads, port: ch.port2 }, transferList: [ch.port2] }));
+    helpers.push(new Worker(__filename, { workerData: { role: 'helper', P, sab, ctrlSab, index: i, nThreads, port: ch.port2, calib }, transferList: [ch.port2] }));
     ports.push(ch.port1);
   }
   // Wait until helpers are ready.
@@ -187,6 +191,7 @@ async function masterMain() {
   // Pack: per decision node the hands with weight >= THR: [hand, w, st x A, ev x A].
   const THR = 5e-4;
   const offs = new Int32Array(nodes.length + 1);
+  const mass = new Float32Array(nodes.length); // terminals: share of all deals that reach them
   const chunks = [];
   let len = 0;
   for (const n of nodes) {
@@ -195,6 +200,7 @@ async function masterMain() {
     if (!d) continue;
     let arr;
     if (d.ranges) {
+      mass[n.idx] = d.mass;
       // terminal: dense ranges of the active players, in n.active order
       arr = new Float32Array(n.active.length * H);
       n.active.forEach((q, k) => arr.set(d.ranges[q], k * H));
@@ -225,8 +231,10 @@ async function masterMain() {
     solveMs,
     nodes: nodes.length,
     threads: nThreads,
+    calibratedGroups: calib.length,
+    matrixMB: +((S.mats.WS.length + 1) * H * H * 8 / 1e6).toFixed(2), // per thread
   };
-  parentPort.postMessage({ result: { offs, data, stats } }, [offs.buffer, data.buffer]);
+  parentPort.postMessage({ result: { offs, data, mass, stats } }, [offs.buffer, data.buffer, mass.buffer]);
 }
 
 if (workerData && workerData.role === 'helper') helperMain().catch((e) => { console.error(e); process.exit(1); });

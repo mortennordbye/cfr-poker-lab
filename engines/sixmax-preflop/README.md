@@ -41,6 +41,28 @@ Node ids are the action path: `F` fold, `C` call, `X` check, `R<to>` raise, `A` 
   opponent in 3-way pots, each other player's hand is conditioned only on the hero's hand
   (independent of the other opponents). Folded players' ranges are included this way.
 
+## Calibrated realization (per hand, per group)
+
+Param `realization` (`calibrated` default, or `flat`). Each heads-up flop terminal belongs to a realization group:
+pot type x IP position x OOP position, e.g. `SRP BTN vs BB` (IP first; pot type `LIMP`, `SRP`, `3BP`, `4BP` by the
+number of raises). The default tree has 45 groups.
+
+- Samples: a postflop solve with `params.source = { kind: 'sixmax-preflop', spotKey, terminalKey, group }` (from
+  `terminal.spotKey`, `terminal.key`, `terminal.group`) saves a sample, same format as heads-up plus `group`, `oop`,
+  `ip` (`lib/realization.js`, `cache/realization-samples/6max-<hash>/...`).
+- Table: `buildGroupTable()` pools the samples of all terminals of a group (one per terminal and board) and gives
+  R per class for IP and OOP, mixed with flat R by `m = n / (n + 5)` like heads-up. Inside a group every sample
+  counts the same (texture-weighted); there is no weighting by terminal reach.
+- Solve: each group with a table gets two share matrices (hero IP, hero OOP):
+  `share(h, j) = E*R_ip[h] / (E*R_ip[h] + (1-E)*R_oop[j])`. Groups without samples, 3-way pots and showdowns keep
+  flat R. Memory: 0.46 MB per group per thread (4 threads); all 45 groups = 21.5 MB per thread.
+- 0 samples (or `realization: 'flat'`) gives exactly the old result and the old cache file name; with samples the
+  cache key adds the table version.
+- Flop terminals carry `spotKey`, `key` (node id), `group`, `name`, `mass` (share of all deals that reach it),
+  `calibrated`. `stats.calibration` lists the groups (same shape as hu-preflop; `terminals` = 12 groups with most
+  reach plus all groups with samples, `groups` = all).
+- Batch fill: `tools/calibrate-sixmax.js` (top groups by reach on the 20-flop subset, native Rust engine, resumable).
+
 ## Algorithm
 
 Vector CFR+ (regret floor at 0, linear average strategy, simultaneous updates) over 169 classes
