@@ -1,19 +1,13 @@
 'use strict';
 // Heads-up postflop engine (kind 'postflop'), backed by the Rust library b-inary/postflop-solver
-// (AGPL-3.0-or-later). Node starts one solver process per solve (rs/, built with cargo on first use),
-// reads its progress, and then asks it for nodes over stdin/stdout JSON lines. See README.md.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawn } = require('child_process');
+// (AGPL-3.0-or-later). Node starts one solver process per solve (rs/, built with cargo on first use, see
+// backend.js), reads its progress, and then asks it for nodes over stdin/stdout JSON lines. On the static site the
+// same Rust code runs as WebAssembly in a Web Worker (public/browser/postflop-backend.js, same messages). See README.md.
+const backend = require('./backend');
 // Range, board and size parsing are shared with the old JS engine (same param formats).
 const G = require('../postflop-js/game');
 const { cardName } = require('../../lib/equity');
 
-const RS_DIR = path.join(__dirname, 'rs');
-// POSTFLOP_BIN: a prebuilt binary (the container image sets it); then cargo is never run.
-const PREBUILT = process.env.POSTFLOP_BIN || null;
-const BIN = PREBUILT || path.join(RS_DIR, 'target', 'release', process.platform === 'win32' ? 'postflop-engine.exe' : 'postflop-engine');
 const SCALE = 100; // chips per bb inside the solver (amounts are integers: 0.01 bb steps)
 const STREET = { 3: 'flop', 4: 'turn', 5: 'river' };
 
@@ -94,7 +88,7 @@ function normalizeParams(q = {}) {
   P.iterations = Math.round(num(q.iterations, 1, 10000, DEFAULTS.iterations));
   P.targetExploitability = num(q.targetExploitability, 0, 100, DEFAULTS.targetExploitability);
   P.maxSeconds = num(q.maxSeconds, 1, 7200, DEFAULTS.maxSeconds);
-  P.threads = Math.round(num(q.threads, 1, Math.max(1, os.cpus().length), Math.min(DEFAULTS.threads, os.cpus().length || 1)));
+  P.threads = Math.round(num(q.threads, 1, backend.cpus, Math.min(DEFAULTS.threads, backend.cpus)));
   P.maxMemoryMB = num(q.maxMemoryMB, 50, 64000, DEFAULTS.maxMemoryMB);
   P.compressAboveMB = num(q.compressAboveMB, 0, 64000, DEFAULTS.compressAboveMB);
   P.compress = q.compress === true || q.compress === 'true' ? true : q.compress === false || q.compress === 'false' ? false : 'auto';
@@ -138,109 +132,53 @@ function solverConfig(P, mode) {
   };
 }
 
-// ---------------------------------------------------------------- binary build
-let buildPromise = null;
-function newestMtime(dir) {
-  let t = 0;
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const f = path.join(dir, e.name);
-    t = Math.max(t, e.isDirectory() ? newestMtime(f) : fs.statSync(f).mtimeMs);
-  }
-  return t;
-}
-function needsBuild() {
-  if (PREBUILT) return false;
-  if (!fs.existsSync(BIN)) return true;
-  const bin = fs.statSync(BIN).mtimeMs;
-  return newestMtime(path.join(RS_DIR, 'src')) > bin || fs.statSync(path.join(RS_DIR, 'Cargo.toml')).mtimeMs > bin;
-}
-function ensureBinary(onProgress) {
-  if (!needsBuild()) return Promise.resolve(BIN);
-  if (buildPromise) return buildPromise;
-  if (onProgress) onProgress(0, 'building the Rust solver (first use, about 1 minute)');
-  const env = { ...process.env };
-  env.PATH = ['/opt/homebrew/opt/rustup/bin', path.join(os.homedir(), '.cargo', 'bin'), env.PATH || ''].join(path.delimiter);
-  buildPromise = new Promise((resolve, reject) => {
-    const p = spawn('cargo', ['build', '--release'], { cwd: RS_DIR, env, stdio: ['ignore', 'ignore', 'pipe'] });
-    let err = '';
-    p.stderr.on('data', (d) => { err = (err + d).slice(-4000); });
-    p.on('error', (e) => reject(new Error(e.code === 'ENOENT'
-      ? 'cargo not found: install Rust (https://rustup.rs) or put cargo in PATH, then retry. The postflop-js engine works without Rust.'
-      : 'cargo failed to start: ' + e.message)));
-    p.on('exit', (code) => (code === 0 && fs.existsSync(BIN) ? resolve(BIN) : reject(new Error('cargo build --release failed:\n' + err))));
-  }).finally(() => { buildPromise = null; });
-  return buildPromise;
-}
-
-// ---------------------------------------------------------------- solver process
-const live = new Set();
-process.on('exit', () => { for (const c of live) { try { c.kill('SIGKILL'); } catch { /* ignore */ } } });
-
+// ---------------------------------------------------------------- solver process (or Web Worker)
 function startProcess(P, mode, onProgress) {
-  return ensureBinary(onProgress).then((bin) => new Promise((resolve, reject) => {
-    const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
-    live.add(child);
+  return backend.ready(onProgress).then(() => new Promise((resolve, reject) => {
     const pending = new Map();
-    let nextId = 1, buf = '', stderr = '', done = false, info = null, dead = null;
+    let nextId = 1, done = false, info = null, dead = null, ch = null;
     const fail = (e) => {
       dead = e;
       if (!done) { done = true; reject(e); }
       for (const [, p] of pending) p.reject(e);
       pending.clear();
     };
-    child.on('error', (e) => fail(new Error('solver process: ' + e.message)));
-    child.on('exit', (code, sig) => {
-      live.delete(child);
-      if (!dead) fail(new Error(sig ? `solver process stopped (${sig})` : `solver process ended, code ${code}${stderr ? ': ' + stderr.trim().slice(-500) : ''}`));
-    });
-    child.stdin.on('error', () => { /* process gone: handled by exit */ });
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
-    child.stdout.on('data', (d) => {
-      buf += d;
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i);
-        buf = buf.slice(i + 1);
-        if (!line.trim()) continue;
-        let m;
-        try { m = JSON.parse(line); } catch { continue; }
-        if (m.id !== undefined) {
-          const p = pending.get(m.id);
-          if (p) { pending.delete(m.id); if (m.error) p.reject(new Error(m.error)); else p.resolve(m.node); }
-        } else if (m.type === 'info') {
-          info = m;
-          if (onProgress) onProgress(0.01, `solving: ${m.combos[0]} vs ${m.combos[1]} combos, ${m.memoryMB} MB${m.compressed ? ' (compressed)' : ''}, ${m.threads} threads`);
-        } else if (m.type === 'progress') {
-          if (onProgress) {
-            const e = m.exploitability;
-            const f = Math.max(m.iteration / P.iterations, m.elapsedMs / 1000 / P.maxSeconds,
-              e ? Math.min(1, Math.pow(P.targetExploitability / e, 0.7)) : 0);
-            onProgress(Math.min(0.97, f), `iteration ${m.iteration}/${P.iterations}, exploitability ${e === null || e === undefined ? '?' : e.toFixed(3)}% pot`);
-          }
-        } else if (m.type === 'done') {
-          done = true;
-          resolve({ stats: m.stats, info, query, kill });
-        } else if (m.type === 'error') {
-          fail(new Error(m.error));
-          kill();
+    function onMessage(m) {
+      if (m.id !== undefined) {
+        const p = pending.get(m.id);
+        if (p) { pending.delete(m.id); if (m.error) p.reject(new Error(m.error)); else p.resolve(m.node); }
+      } else if (m.type === 'info') {
+        info = m;
+        if (onProgress) onProgress(0.01, `solving: ${m.combos[0]} vs ${m.combos[1]} combos, ${m.memoryMB} MB${m.compressed ? ' (compressed)' : ''}, ${m.threads} thread${m.threads === 1 ? '' : 's'}`);
+      } else if (m.type === 'progress') {
+        if (onProgress) {
+          const e = m.exploitability;
+          const f = Math.max(m.iteration / P.iterations, m.elapsedMs / 1000 / P.maxSeconds,
+            e ? Math.min(1, Math.pow(P.targetExploitability / e, 0.7)) : 0);
+          onProgress(Math.min(0.97, f), `iteration ${m.iteration}/${P.iterations}, exploitability ${e === null || e === undefined ? '?' : e.toFixed(3)}% pot`);
         }
+      } else if (m.type === 'done') {
+        done = true;
+        resolve({ stats: m.stats, info, query, kill });
+      } else if (m.type === 'error') {
+        // load: the WebAssembly build could not start (browser only); the caller may use postflop-js instead.
+        fail(Object.assign(new Error(m.error), m.load ? { wasmLoad: true } : {}));
+        kill();
       }
-    });
+    }
     function query(pathArr) {
       if (dead) return Promise.reject(dead);
       return new Promise((res, rej) => {
         const id = nextId++;
         pending.set(id, { resolve: res, reject: rej });
-        child.stdin.write(JSON.stringify({ id, path: pathArr }) + '\n');
+        ch.send({ id, path: pathArr });
       });
     }
     function kill() {
       if (!dead) dead = new Error('solve was disposed');
-      try { child.stdin.end(); } catch { /* ignore */ }
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      ch.kill();
     }
-    child.stdin.write(JSON.stringify(solverConfig(P, mode)) + '\n');
-    if (mode === 'stats') child.stdin.end();
+    ch = backend.open(solverConfig(P, mode), { onMessage, onExit: (e) => { if (!dead) fail(e); } });
   }));
 }
 
@@ -331,17 +269,14 @@ async function solve(params, onProgress) {
 // Memory estimate of the tree without solving: { memoryMB, memoryRawMB, memoryCompressedMB, compressed, combos }.
 async function estimate(params) {
   const P = normalizeParams(params || {});
-  const bin = await ensureBinary();
+  await backend.ready();
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, [], { stdio: ['pipe', 'pipe', 'inherit'] });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.on('error', reject);
-    child.on('exit', () => {
-      const m = out.trim().split('\n').map((l) => { try { return JSON.parse(l); } catch { return {}; } }).pop() || {};
-      if (m.type === 'estimate') resolve(m); else reject(new Error(m.error || 'estimate failed'));
+    let ch = null, settled = false;
+    const end = (fn, v) => { if (!settled) { settled = true; fn(v); if (ch) ch.kill(); } };
+    ch = backend.open(solverConfig(P, 'estimate'), {
+      onMessage: (m) => (m.type === 'estimate' ? end(resolve, m) : m.type === 'error' ? end(reject, new Error(m.error)) : null),
+      onExit: (e) => end(reject, new Error('estimate failed: ' + e.message)),
     });
-    child.stdin.end(JSON.stringify(solverConfig(P, 'estimate')) + '\n');
   });
 }
 
@@ -349,10 +284,11 @@ async function estimate(params) {
 async function solveStats(params, onProgress) {
   const t0 = Date.now();
   const proc = await startProcess(normalizeParams(params || {}), 'stats', onProgress);
+  proc.kill(); // the native process has ended already; a Web Worker ends here
   return finishStats(proc.stats, t0);
 }
 
 module.exports = {
-  kind: 'postflop', title: 'Heads-up postflop', params, solve, solveStats, estimate, normalizeParams, solverConfig, ensureBinary,
+  kind: 'postflop', title: 'Heads-up postflop', params, solve, solveStats, estimate, normalizeParams, solverConfig, ensureBinary: backend.ensureBinary,
   DEFAULT_RANGES, AUTO_SIZES,
 };

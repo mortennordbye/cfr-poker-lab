@@ -5,16 +5,39 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 publish = false
 
+# src/lib.rs: the shared logic. src/main.rs: the native process. src/wasm.rs: the WebAssembly module
+# (built with `cargo rustc --lib --crate-type cdylib --target wasm32-unknown-unknown`, see ../../../tools/build-wasm.sh).
+[lib]
+name = "postflop_engine"
+path = "src/lib.rs"
+
 [[bin]]
 name = "postflop-engine"
 path = "src/main.rs"
 
+[features]
+default = ["threads"]
+# rayon threads (native; WebAssembly only with wasm-threads)
+threads = ["postflop-solver/rayon", "dep:rayon"]
+# multithreaded WebAssembly: needs nightly with -Z build-std and +atomics (tools/build-wasm.sh).
+# custom-alloc (nightly): postflop-solver's stack allocator per thread. The default allocator has one lock for all
+# threads in WebAssembly; with it, 8 threads were only 1.9 times faster than one.
+wasm-threads = ["threads", "dep:wasm-bindgen-rayon", "postflop-solver/custom-alloc"]
+
 [dependencies]
 # b-inary/postflop-solver (AGPL-3.0-or-later), pinned commit. Stable Rust: no custom-alloc, no bincode/zstd.
-postflop-solver = { git = "https://github.com/b-inary/postflop-solver", rev = "9d1509fe5077d019825f833eed04b16d342dfda1", default-features = false, features = ["rayon"] }
-rayon = "1.8"
+postflop-solver = { git = "https://github.com/b-inary/postflop-solver", rev = "9d1509fe5077d019825f833eed04b16d342dfda1", default-features = false }
+rayon = { version = "1.8", optional = true }
 serde_json = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The wasm-bindgen version must match the wasm-bindgen CLI (tools/build-wasm.sh checks it).
+wasm-bindgen = "=0.2.130"
+js-sys = "0.3"
+wasm-bindgen-rayon = { version = "1.3", optional = true, features = ["no-bundler"] }
 
 [profile.release]
 opt-level = 3
