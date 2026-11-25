@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps):"
+    groups:
+      github-actions:
+        patterns: ["*"]
+  - package-ecosystem: "cargo"
+    directory: "/engines/postflop/rs"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps):"
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
