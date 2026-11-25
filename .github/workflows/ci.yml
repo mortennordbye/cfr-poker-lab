@@ -14,6 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A Co-authored-by trailer that names an AI agent puts it in the GitHub contributors list, and only a history
+  # rewrite removes it again. Fail on such lines in every pushed or proposed commit.
+  commit-messages:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: No AI co-author lines
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then range="$BASE..$HEAD"
+          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then range="$BEFORE..$HEAD"
+          else range="-n 50 $HEAD"; fi
+          bad=0
+          for c in $(git rev-list $range); do
+            if git log -1 --format=%B "$c" | grep -qiE "^co-authored-by:.*(claude|anthropic|copilot|openai|cursor|devin)|generated with \[claude code\]"; then
+              echo "::error::$(git log -1 --format="%h %s" "$c") has an AI co-author or \"Generated with\" line"; bad=1
+            fi
+          done
+          exit $bad
+
   engines:
     name: Engine tests (Node)
     runs-on: ubuntu-latest

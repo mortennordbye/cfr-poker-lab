@@ -36,6 +36,9 @@ There is no `package.json`: the project uses Node.js 26 built-ins only. Do not a
 ## Conventions
 
 - Commits follow Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `ci:`).
+- No AI co-author or "Generated with" lines in commit messages or PR bodies (no `Co-authored-by:` naming an agent).
+  `.claude/settings.json` turns them off for Claude Code, squash merges use the PR title only, and the CI job
+  "Commit messages" fails on them. A trailer that reaches main adds the agent to the GitHub contributors list.
 - Never commit secrets or credentials.
 - Long solves run in worker threads or child processes; never block the server's event loop.
 - Shared modules (`lib/`, the JavaScript engines) must also run in the browser: use `lib/platform.js` for files and
