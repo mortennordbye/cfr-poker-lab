@@ -165,3 +165,61 @@ Idle filler (`idle.js`, off by default, setting kept in `cache/idle.json`): afte
 API requests (other than `/api/idle`) and with no solve running, it solves one flop for the last used hu-preflop
 spot (terminal with the best reach mass / (samples + 1), first `flopSubset(20)` board not sampled) in a child
 process, with kind `postflop` if loaded, else `postflop-js`. Any other API request kills it.
+
+## Flop reports
+
+A flop report solves one heads-up flop spot on many flops and aggregates the root results (`lib/reports.js`, CLI
+`tools/flop-report.js`). Local mode only: the static site answers 404 for these paths.
+
+Input (`POST /api/report` body):
+
+```js
+{ kind: 'hu-preflop' | 'sixmax-preflop', params: { ...preflop params }, terminalKey: 'SB:Raise 2.5/BB:Call' }
+// terminalKey = node.terminal.key, or the node id of a heads-up flop terminal
+// or a postflop spot:
+{ spot: { ranges: { BB: {...} | 'range text', SB: ... }, pot: 5, stack: 97.5, oop: 'BB', ip: 'SB' } }
+// plus, for both:
+  flops: 25 | 49 | 95,                         // lib/flops.js flopSubset(n); default 25
+  tree: { flopBets, flopRaises, turnBets, turnRaises, riverBets, riverRaises, donkBets, raiseCap, allinSpr,
+          iterations, targetExploitability /* default 1 */, maxSeconds /* default 300 */, threads /* default 4 */ }
+```
+
+- One postflop solve at a time (engine `postflop`, else `postflop-js`), 4 threads by default. Reports queue behind each other.
+- A flop from a `hu-preflop` terminal also saves a realization sample (same files as "Solve flop").
+- Storage: `cache/reports/<id>.json` (`REPORTS_DIR`), written after each flop. `id` = hash of the input without
+  `threads`. The same input gives the same id: a stopped report continues, a finished one is returned as it is.
+  The spot (ranges, pot, stack) is fixed when the report starts, so new calibration samples do not change it.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| POST | `/api/report` | input above | `{ reportId, status: 'queued' \| 'running' \| 'done' }`, 400 `{ error }` on bad input |
+| GET | `/api/report/:id` | | report (below), 404 if unknown |
+| GET | `/api/reports` | | `[{ id, status, name, done, total, progress, createdAt, updatedAt, runMs, input }]`, newest first |
+
+Report:
+
+```js
+{
+  id, status: 'queued' | 'running' | 'done' | 'error' | 'stopped',  // stopped: not running, not done (POST again)
+  message, error, progress /* 0..1 */, done, total, current /* board being solved */, etaMs,
+  name /* 'Raised pot (SB 2.5 / BB call)' */, createdAt, updatedAt, runMs /* solve time of all runs */, engine,
+  input, tree, flops: ['Kh7h2h', ...],
+  spot: { oop, ip, pot, stack, ranges, source: { kind, spotKey, terminalKey, name, mass } | null },
+  results: [{                                    // one per finished flop, in the order of flops
+    board: 'Kh7h2h',
+    texture: { suits: 'monotone' | 'two-tone' | 'rainbow', pairing: 'unpaired' | 'paired' | 'trips',
+               high: 'K', highRank: 11, ranks: [11, 5, 0], group: 'mono-unpaired-KQ' },
+    oop: { player: 'BB', actions: [{ label: 'Check', type: 'check', amount: 0, freq: 0.62 }, ...], bet: 0.38 },
+    ip: { player: 'SB', actions: [...], bet } | null,   // IP at the node after OOP checks
+    ev: { oop, ip },                                     // bb won from the flop root (shares of the pot)
+    eq: { oop, ip },                                     // range equity
+    exploitabilityPctPot, iterations, ms, sample: 'saved' | ... (hu-preflop source only),
+  }],
+  summary: [{                                    // mean over the flops of each group (each flop = equal share)
+    key: 'all' | 'monotone' | 'two-tone' | 'rainbow' | 'unpaired' | 'paired' | 'trips' | 'high-A' ... 'high-9',
+    label, by: null | 'suits' | 'pairing' | 'high', n,
+    oop: { n, actions: [{ label, type, amount, freq }], bet }, ip: same | null,
+    ev: { oop, ip }, eq: { oop, ip }, exploitabilityPctPot,
+  }],
+}
+```
