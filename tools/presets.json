@@ -2,11 +2,11 @@
   "flop-report": {
     "hu-100bb-srp": {
       "title": "Heads-up 100bb, SB raises 2.5, BB calls",
-      "kind": "hu-preflop", "params": { "stack": 100 }, "terminal": "SB:Raise 2.5/BB:Call"
+      "kind": "hu-preflop", "params": {}, "terminal": "SB:Raise 2.5/BB:Call"
     },
     "smoke": {
       "title": "Smoke test: heads-up SRP, tiny tree",
-      "kind": "hu-preflop", "params": { "stack": 100 }, "terminal": "SB:Raise 2.5/BB:Call",
+      "kind": "hu-preflop", "params": {}, "terminal": "SB:Raise 2.5/BB:Call",
       "tree": { "flopBets": "50", "flopRaises": "allin", "turnBets": "50", "turnRaises": "allin", "riverBets": "50",
         "riverRaises": "allin", "donkBets": "none", "raiseCap": 1, "iterations": 30, "targetExploitability": 5, "maxSeconds": 60 }
     }

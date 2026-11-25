@@ -3,6 +3,7 @@
 // .github/workflows/precompute.yml) into one data folder, plus the data that was there before (--base).
 //
 // Usage: node tools/merge-data.js --out <new dir> [--base <old data dir>] <shard dir> [<shard dir> ...]
+//        node tools/merge-data.js --notes manifest.json      prints the text of the release "data"
 // Each input folder has the layout of cache/: reports/<id>.json and realization-samples/<spotKey>/<terminal>/<board>.json.
 // Output: the same layout plus manifest.json.
 //
@@ -135,10 +136,25 @@ function mergeData({ out, inputs, log = console.log }) {
   return manifest;
 }
 
-module.exports = { mergeData, mergeReport, collectSamples, MANIFEST_VERSION };
+// Markdown tables of a manifest (GitHub job summary).
+function summaryMd(m) {
+  return ['### Data', '', `${m.totals.reports} reports (${m.totals.reportsDone} done), ${m.totals.samples} samples.`, '',
+    '| report | name | flops | status |', '| --- | --- | --- | --- |', ...m.reports.map((r) => `| ${r.id} | ${r.name} | ${r.done}/${r.total} | ${r.status} |`), '',
+    '| spot | group | samples |', '| --- | --- | ---: |', ...m.samples.map((s) => `| ${s.spotKey} | ${s.group} | ${s.count} |`), ''].join('\n');
+}
+// Text of the release "data".
+function releaseNotes(m) {
+  return [`Precomputed data for cfr-poker-lab, made by the Precompute workflow (git ${String(m.gitSha).slice(0, 7)}, ${m.createdAt}).`,
+    'Get it with `just data` (or `node tools/fetch-data.js`). Each run replaces the assets.', '',
+    `${m.totals.reports} reports (${m.totals.reportsDone} done), ${m.totals.samples} realization samples.`, '',
+    ...m.reports.map((r) => `- report ${r.id}: ${r.name}, ${r.done}/${r.total} flops, ${r.status}`)].join('\n');
+}
+
+module.exports = { mergeData, mergeReport, collectSamples, summaryMd, releaseNotes, MANIFEST_VERSION };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
+  if (argv[0] === '--notes') { console.log(releaseNotes(readJson(argv[1]))); process.exit(0); }
   const inputs = [];
   let out = null;
   for (let i = 0; i < argv.length; i++) {
@@ -146,6 +162,9 @@ if (require.main === module) {
     else if (argv[i] === '--base') { const d = argv[++i]; if (fs.existsSync(d)) inputs.unshift({ dir: d, base: true }); else console.log(`no base data at ${d}`); }
     else inputs.push({ dir: argv[i], base: false });
   }
-  if (!out) { console.error('usage: node tools/merge-data.js --out <dir> [--base <dir>] <shard dir>...'); process.exit(2); }
-  try { mergeData({ out, inputs }); } catch (e) { console.error(e.message); process.exit(1); }
+  if (!out) { console.error('usage: node tools/merge-data.js --out <dir> [--base <dir>] <shard dir>...  |  --notes <manifest.json>'); process.exit(2); }
+  try {
+    const m = mergeData({ out, inputs });
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryMd(m));
+  } catch (e) { console.error(e.message); process.exit(1); }
 }

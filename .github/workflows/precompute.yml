@@ -1,0 +1,288 @@
+name: Precompute
+
+# Heavy batch solves on GitHub-hosted runners (free for this public repository), stored in the release "data".
+#   plan     downloads the current data, finds the work that is still missing for the input and writes the shard
+#            matrix (no shards when nothing is missing: a second run of the same input ends here)
+#   build    builds the native Rust engine once (the shards do not compile)
+#   shard    one runner per shard, round robin over the missing flops; each flop is saved when it is done
+#   merge    joins the old data and the shard outputs: cfr-data.tar.gz + manifest.json
+#   publish  replaces the assets of the release "data" (the only job that may write)
+# Pull requests that change the pipeline run a smoke test (2 shards, 2 flops, tiny tree, no publish).
+# See CONTRACT.md, "Precomputed data".
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: What to compute
+        type: choice
+        options: [flop-report, sixmax-calibration]
+        default: flop-report
+      preset:
+        description: "Spot (tools/presets.json). flop-report: hu-100bb-srp. sixmax-calibration: cash-100bb-top5, mtt-ante1-co-vs-bb"
+        type: choice
+        options: [hu-100bb-srp, cash-100bb-top5, mtt-ante1-co-vs-bb, smoke]
+        default: hu-100bb-srp
+      flops:
+        description: "Flops. flop-report: 25, 49 or 95. sixmax-calibration: flops per group (20 is the usual)"
+        type: choice
+        options: ["25", "49", "95", "20"]
+        default: "25"
+      shards:
+        description: Most shards (runners) at the same time; fewer when less work is missing (free plan limit 20)
+        type: number
+        default: 20
+      threads:
+        description: Threads per solve (ubuntu-latest has 4 vCPU)
+        type: number
+        default: 4
+      budget:
+        description: Minutes per shard before it starts no new flop (the job limit is 350)
+        type: number
+        default: 320
+      limit:
+        description: "flop-report: solve only the first N missing flops (0 = all)"
+        type: number
+        default: 0
+      force:
+        description: Solve everything again, also what the data has already
+        type: boolean
+        default: false
+      publish:
+        description: Replace the assets of the release "data"
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/workflows/precompute.yml
+      - tools/flop-report.js
+      - tools/calibrate-sixmax.js
+      - tools/precompute-plan.js
+      - tools/merge-data.js
+      - tools/fetch-data.js
+      - tools/presets.json
+      - lib/reports.js
+      - lib/shard.js
+
+permissions:
+  contents: read
+
+# Two runs of the same input never run at once (the second waits). Pull request smoke runs replace older ones.
+concurrency:
+  group: precompute-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}-{3}', inputs.job, inputs.preset, inputs.flops, inputs.limit) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      count: ${{ steps.plan.outputs.count }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: Unit tests (shards, merge, reports)
+        if: github.event_name == 'pull_request'
+        run: node tools/merge-data.test.js && node lib/reports.test.js
+      - name: Download the current data
+        if: github.event_name != 'pull_request' && !inputs.force
+        run: node tools/fetch-data.js --dest "$RUNNER_TEMP/base"
+      - name: Plan the missing work
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          JOB: ${{ inputs.job }}
+          PRESET: ${{ inputs.preset }}
+          FLOPS: ${{ inputs.flops }}
+          LIMIT: ${{ inputs.limit }}
+          SHARDS: ${{ inputs.shards }}
+          FORCE: ${{ inputs.force }}
+        # Writes count and matrix to $GITHUB_OUTPUT and the plan files to work/ (the shards' artifact).
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            node tools/precompute-plan.js --work work --smoke --force
+          elif [ "$FORCE" = true ]; then
+            node tools/precompute-plan.js --work work --job "$JOB" --preset "$PRESET" --flops "$FLOPS" --limit "$LIMIT" --shards "$SHARDS" --force
+          else
+            node tools/precompute-plan.js --work work --base "$RUNNER_TEMP/base" --job "$JOB" --preset "$PRESET" --flops "$FLOPS" --limit "$LIMIT" --shards "$SHARDS"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: steps.plan.outputs.count != '0'
+        with:
+          name: plan
+          path: work
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engines/postflop/rs
+      - name: Build
+        run: cargo build --release --locked --manifest-path engines/postflop/rs/Cargo.toml
+      - uses: actions/upload-artifact@v7
+        with:
+          name: postflop-engine
+          path: engines/postflop/rs/target/release/postflop-engine
+          if-no-files-found: error
+          retention-days: 1
+
+  shard:
+    name: Shard ${{ matrix.name }}
+    needs: [plan, build]
+    if: needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: work
+      - uses: actions/download-artifact@v8
+        with:
+          name: postflop-engine
+          path: ${{ runner.temp }}/bin
+      - name: Solve
+        env:
+          POSTFLOP_BIN: ${{ runner.temp }}/bin/postflop-engine
+          TASK: ${{ matrix.task }}
+          JOB: ${{ matrix.job }}
+          PRESET: ${{ matrix.preset }}
+          FLOPS: ${{ matrix.flops }}
+          LIMIT: ${{ matrix.limit }}
+          SHARD: ${{ matrix.shard }}
+          THREADS: ${{ github.event_name == 'pull_request' && 4 || inputs.threads }}
+          BUDGET: ${{ github.event_name == 'pull_request' && 20 || inputs.budget }}
+        run: |
+          chmod +x "$POSTFLOP_BIN"
+          mkdir -p out/reports out/realization-samples
+          if [ "$JOB" = flop-report ]; then
+            cp work/"$TASK"/reports/*.json out/reports/
+            node tools/flop-report.js --preset "$PRESET" --flops "$FLOPS" --limit "$LIMIT" --shard "$SHARD" \
+              --threads "$THREADS" --budgetMin "$BUDGET" --reports-dir out/reports --samples-dir out/realization-samples
+          else
+            node tools/calibrate-sixmax.js --preset "$PRESET" --jobs "work/$TASK/plan.json" --shard "$SHARD" \
+              --threads "$THREADS" --budgetMin "$BUDGET" --samples-dir out/realization-samples
+          fi
+      # Also after a failure or the time limit: the flops that are done are in out/ and the merge keeps them.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: shard-${{ matrix.name }}
+          path: out
+          if-no-files-found: warn
+          retention-days: 1
+
+  merge:
+    name: Merge
+    needs: [plan, shard]
+    # Also when some shards failed or hit the time limit: their saved flops are kept. Not when the engine build failed.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.count != '0' && needs.shard.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: shard-*
+          path: shards
+      - name: Download the current data
+        if: github.event_name != 'pull_request'
+        run: node tools/fetch-data.js --dest "$RUNNER_TEMP/base"
+      - name: Merge
+        run: |
+          mkdir -p shards
+          node tools/merge-data.js --out data --base "$RUNNER_TEMP/base" shards/*/
+          mkdir -p data/reports data/realization-samples dist
+          tar -czf dist/cfr-data.tar.gz -C data reports realization-samples
+          cp data/manifest.json dist/
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cfr-data
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release "data"
+    needs: merge
+    if: ${{ !cancelled() && needs.merge.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    # One publish at a time, so two runs that end together do not replace each other's data.
+    concurrency:
+      group: precompute-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - uses: actions/download-artifact@v8
+        with:
+          name: cfr-data
+          path: ${{ runner.temp }}/new
+      # Merge once more with the data as it is now: another run may have published since this run's merge.
+      - name: Merge with the latest data
+        run: |
+          mkdir -p "$RUNNER_TEMP/run"
+          tar -xzf "$RUNNER_TEMP/new/cfr-data.tar.gz" -C "$RUNNER_TEMP/run"
+          node tools/fetch-data.js --dest "$RUNNER_TEMP/base"
+          node tools/merge-data.js --out data --base "$RUNNER_TEMP/base" "$RUNNER_TEMP/run"
+          mkdir -p data/reports data/realization-samples dist
+          tar -czf dist/cfr-data.tar.gz -C data reports realization-samples
+          cp data/manifest.json dist/
+      - name: Replace the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes=$(node tools/merge-data.js --notes dist/manifest.json)
+          if ! gh release view data > /dev/null 2>&1; then
+            gh release create data --title "Precomputed data" --notes "$notes" --latest=false --target "$GITHUB_SHA"
+          else
+            gh release edit data --notes "$notes"
+          fi
+          gh release upload data dist/cfr-data.tar.gz dist/manifest.json --clobber
+      # The live page copies the data at build time: build it again.
+      - name: Rebuild GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run pages.yml --ref "$BRANCH"

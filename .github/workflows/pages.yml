@@ -38,6 +38,12 @@ jobs:
         run: node tools/build-web.js dist
         env:
           WASM_REQUIRED: "1"
+      # Precomputed flop reports (release "data", .github/workflows/precompute.yml) for GET /api/reports in the page.
+      # No release yet: nothing to copy. A failed download leaves the site without reports, not without a deploy.
+      - name: Precomputed data
+        run: |
+          node tools/fetch-data.js --dest dist/data --only reports --manifest dist/data/manifest.json \
+            || echo "::warning::precomputed data not downloaded; the site has no flop reports"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
