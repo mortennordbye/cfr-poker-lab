@@ -48,3 +48,99 @@ jobs:
         run: cargo build --release --locked --manifest-path engines/postflop/rs/Cargo.toml
       - name: Postflop (Rust) tests
         run: node engines/postflop/test.js
+
+  # Multi-arch image: each platform builds on a native runner (no QEMU, so the Rust
+  # build stays fast), pushes by digest, then `image` merges both into one tag.
+  # On pull requests the image is built as a smoke test but not pushed.
+  image-build:
+    name: Build image (${{ matrix.platform }})
+    needs: [engines, rust]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Platform pair
+        run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,scope=${{ env.PLATFORM_PAIR }},mode=max
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image:
+    name: Publish image
+    needs: image-build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        # Word splitting is intended: one "-t <tag>" pair and one digest per word.
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+      - name: Inspect
+        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
