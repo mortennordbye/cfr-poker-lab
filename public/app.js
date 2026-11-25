@@ -250,8 +250,26 @@
   }
   window.addEventListener('resize', sizeGrid);
 
+  // Download the node on screen as JSON, with the solve it belongs to (the server keeps solves in memory only).
+  function exportNode() {
+    const n = S.node, f = S.frame;
+    if (!n || !f) return;
+    const data = {
+      exportedAt: new Date().toISOString(),
+      solve: { solveId: f.solveId, kind: f.kind, params: f.params, stats: f.stats, root: f.root },
+      node: n,
+    };
+    const name = [f.kind, n.street, (n.board || []).join(''), n.id].filter(Boolean).join('-').replace(/[^\w.-]+/g, '_').slice(0, 120);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const a = el('a'); a.href = url; a.download = name + '.json';
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  $('#exportBtn').onclick = exportNode;
+
   function render() {
     $('#spotline').innerHTML = spotLine(S.frame);
+    $('#exportBtn').classList.remove('hidden');
     $('#empty').classList.add('hidden');
     renderActionBar();
     sizeGrid();
