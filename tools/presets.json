@@ -4,6 +4,42 @@
       "title": "Heads-up 100bb, SB raises 2.5, BB calls",
       "kind": "hu-preflop", "params": {}, "terminal": "SB:Raise 2.5/BB:Call"
     },
+    "cash100-btn-vs-bb-srp": {
+      "title": "6-max cash 100bb, BTN raises 2.5, BB calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "F-F-F-R2.5-F-C"
+    },
+    "cash100-co-vs-bb-srp": {
+      "title": "6-max cash 100bb, CO raises 2.5, BB calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "F-F-R2.5-F-F-C"
+    },
+    "cash100-sb-vs-bb-srp": {
+      "title": "6-max cash 100bb, SB raises 3, BB calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "F-F-F-F-R3-C"
+    },
+    "cash100-utg-vs-bb-srp": {
+      "title": "6-max cash 100bb, UTG raises 2.5, BB calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "R2.5-F-F-F-F-C"
+    },
+    "cash100-bb-3bet-vs-btn": {
+      "title": "6-max cash 100bb, BTN raises 2.5, BB 3-bets 10, BTN calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "F-F-F-R2.5-F-R10-C"
+    },
+    "cash100-btn-3bet-vs-co": {
+      "title": "6-max cash 100bb, CO raises 2.5, BTN 3-bets 7.5, CO calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "F-F-R2.5-R7.5-F-F-C"
+    },
+    "cash100-sb-3bet-vs-btn": {
+      "title": "6-max cash 100bb, BTN raises 2.5, SB 3-bets 10, BTN calls",
+      "kind": "sixmax-preflop", "params": { "stack": 100 }, "terminal": "F-F-F-R2.5-R10-F-C"
+    },
+    "mtt40-btn-vs-bb-srp": {
+      "title": "6-max MTT 40bb, BB ante 1, BTN raises 2.1, BB calls",
+      "kind": "sixmax-preflop", "params": { "stack": 40, "ante": 1 }, "terminal": "F-F-F-R2.1-F-C"
+    },
+    "mtt25-btn-vs-bb-srp": {
+      "title": "6-max MTT 25bb, BB ante 1, BTN raises 2.1, BB calls",
+      "kind": "sixmax-preflop", "params": { "stack": 25, "ante": 1 }, "terminal": "F-F-F-R2.1-F-C"
+    },
     "smoke": {
       "title": "Smoke test: heads-up SRP, tiny tree",
       "kind": "hu-preflop", "params": {}, "terminal": "SB:Raise 2.5/BB:Call",

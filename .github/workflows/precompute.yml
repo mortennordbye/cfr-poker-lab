@@ -18,9 +18,22 @@ on:
         options: [flop-report, sixmax-calibration]
         default: flop-report
       preset:
-        description: "Spot (tools/presets.json). flop-report: hu-100bb-srp. sixmax-calibration: cash-100bb-top5, mtt-ante1-co-vs-bb"
+        description: "Spot (tools/presets.json). flop-report: hu-100bb-srp, cash100-*, mtt40-*, mtt25-*. sixmax-calibration: cash-100bb-top5, mtt-ante1-co-vs-bb"
         type: choice
-        options: [hu-100bb-srp, cash-100bb-top5, mtt-ante1-co-vs-bb, smoke]
+        options:
+          - hu-100bb-srp
+          - cash100-btn-vs-bb-srp
+          - cash100-co-vs-bb-srp
+          - cash100-sb-vs-bb-srp
+          - cash100-utg-vs-bb-srp
+          - cash100-bb-3bet-vs-btn
+          - cash100-btn-3bet-vs-co
+          - cash100-sb-3bet-vs-btn
+          - mtt40-btn-vs-bb-srp
+          - mtt25-btn-vs-bb-srp
+          - cash-100bb-top5
+          - mtt-ante1-co-vs-bb
+          - smoke
         default: hu-100bb-srp
       flops:
         description: "Flops. flop-report: 25, 49 or 95. sixmax-calibration: flops per group (20 is the usual)"
@@ -60,6 +73,7 @@ on:
       - tools/merge-data.js
       - tools/fetch-data.js
       - tools/presets.json
+      - tools/presets.test.js
       - lib/reports.js
       - lib/shard.js
 
@@ -86,9 +100,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-      - name: Unit tests (shards, merge, reports)
+      - name: Unit tests (shards, merge, reports, presets)
         if: github.event_name == 'pull_request'
-        run: node tools/merge-data.test.js && node lib/reports.test.js
+        run: node tools/merge-data.test.js && node lib/reports.test.js && node tools/presets.test.js
       - name: Download the current data
         if: github.event_name != 'pull_request' && !inputs.force
         run: node tools/fetch-data.js --dest "$RUNNER_TEMP/base"

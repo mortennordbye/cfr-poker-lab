@@ -264,7 +264,12 @@ engine, once) → **shard** (one runner each, `--shard i/n` = items i-1, i-1+n, 
 the release assets and starts the Pages build).
 
 - Spots come from `tools/presets.json` (`--preset`). The spot of a report is solved without samples (flat
-  realization), so each run of the same input gets the same spot. 6-max jobs take their terminals and ranges from
+  realization), so each run of the same input gets the same spot. A flop-report preset is
+  `{ title, kind, params, terminal, tree? }`; `terminal` is a `terminalKey` (6-max: the node id). The library
+  presets: `cash100-btn-vs-bb-srp`, `cash100-co-vs-bb-srp`, `cash100-sb-vs-bb-srp`, `cash100-utg-vs-bb-srp`,
+  `cash100-bb-3bet-vs-btn`, `cash100-btn-3bet-vs-co`, `cash100-sb-3bet-vs-btn` (6-max, `{ stack: 100 }`),
+  `mtt40-btn-vs-bb-srp`, `mtt25-btn-vs-bb-srp` (6-max, `{ stack: 40 | 25, ante: 1 }`) and `hu-100bb-srp`. The
+  workflow's `preset` choice list must name every preset (`tools/presets.test.js` checks it). 6-max jobs take their terminals and ranges from
   the flat preflop solve (`tools/calibrate-sixmax.js` round 1).
 - Merge rules: the files of a report id with the newest `createdAt` are joined (a `force` run makes a new one,
   which replaces the old results); a sample path that two inputs have keeps the newer sample (`createdAt`).
