@@ -82,14 +82,20 @@ Without Docker, `node server.js` also works. The `postflop` engine then builds i
 ### Browser mode
 
 The same UI also runs as a static site on GitHub Pages: <https://mortennordbye.github.io/cfr-poker-lab/>.
-The solves run on your computer, inside the page, with the JavaScript engines in Web Workers. A banner in the page says so.
+The solves run on your computer, inside the page, in Web Workers. The Rust `postflop` engine runs as WebAssembly,
+with the same default trees as local mode. A banner in the page says so.
 
-- **Slower**: the JavaScript engine needs about 2 minutes for a raised-pot flop and 6 minutes for a limped-pot flop
-  (seconds with the Rust engine), and large trees can run out of memory. Preflop solves take about as long as locally.
-- **Not available**: the Rust `postflop` engine (flop, turn and river use `postflop-js`) and "Fill calibration when idle".
+- **Slower**: a flop solve from a heads-up preflop spot takes about 1.5 minutes for a raised pot and 2.5 minutes for a
+  limped pot (local: about 1 to 1.5 minutes); a turn solve takes about 4 seconds. Preflop solves take about as long as locally.
+- **One thread without cross-origin isolation**: the page gets it from a service worker. If the browser does not allow
+  it, the engine uses one thread: same results, but a flop takes about 10 minutes and stops at the 10-minute limit.
+- **Memory**: WebAssembly has at most 4 GB. Trees above 3.6 GB stop with "out of memory: try a smaller tree".
+  The default flop trees need about 2.9 GB. The page keeps one finished postflop solve.
+- **Not available**: "Fill calibration when idle". `postflop-js` stays as a fallback if the WebAssembly engine cannot load.
 - Solve caches and calibration samples stay in the browser (IndexedDB).
 
-Build the site locally with `node tools/build-web.js` (writes `dist/`).
+Build the site locally with `tools/build-wasm.sh` (Rust nightly for threads, see
+[engines/postflop/README.md](engines/postflop/README.md#browser-mode-webassembly)), then `node tools/build-web.js` (writes `dist/`).
 
 Fill the calibration samples for one heads-up spot in one batch run (takes hours):
 
@@ -130,11 +136,11 @@ cfr-poker-lab/
 
 | Workflow | Trigger | Purpose |
 | -------- | ------- | ------- |
-| CI | push, PR | engine test suites (Node), Rust build + postflop tests, then a multi-arch image build; on `main` the image is published to `ghcr.io/mortennordbye/cfr-poker-lab` |
+| CI | push, PR | engine test suites (Node), Rust build + postflop tests, WebAssembly build, then a multi-arch image build; on `main` the image is published to `ghcr.io/mortennordbye/cfr-poker-lab` |
 | Container Scan | push, weekly | Trivy image scan, results in the Security tab |
 | Dependency Review | PR | block known-vulnerable dependency changes |
 | Scorecard | push, weekly | OpenSSF supply-chain grade |
-| Pages | push to `main` | build the static site (browser mode) and deploy it to GitHub Pages |
+| Pages | push to `main` | build the WebAssembly engine and the static site (browser mode), deploy it to GitHub Pages |
 
 ---
 

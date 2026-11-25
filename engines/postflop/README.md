@@ -10,12 +10,19 @@ about 10-15 times faster on the same tree.
 postflop-solver is licensed under **AGPL-3.0-or-later**. The Rust program in `rs/` links it, so
 `rs/` is also AGPL-3.0-or-later. This is fine for local personal use. If you give the program to
 other people or run it as a network service for them, the AGPL requires that you also give them
-the source.
+the source. The static site (browser mode) gives the WebAssembly build to each visitor, so its
+source must stay public (this repository).
 
 ## Files
 
-- `index.js`: the engine interface, params, the solver process, node formatting.
-- `rs/`: the Rust program (`cargo` project). `rs/src/main.rs` builds the tree, solves, and answers node queries.
+- `index.js`: the engine interface, params, the solver messages, node formatting.
+- `backend.js`: Node only: builds the binary with cargo and runs the solver process. The static site uses
+  `public/browser/postflop-backend.js` in its place (`tools/build-web.js`): same interface, a Web Worker.
+- `rs/`: the Rust code (`cargo` project), one copy of the logic for both front ends:
+  - `rs/src/lib.rs`: config parsing, tree build, solve loop (progress callback), node data, stats (`rootEv`, `rootEq`).
+  - `rs/src/main.rs`: the native process (stdin/stdout JSON lines, rayon pool, exit when the parent dies).
+  - `rs/src/wasm.rs`: the WebAssembly module (wasm-bindgen): `Engine.solve(config, threads, onMessage)`,
+    `Engine.node(path)`, `Engine.free_tree()`, `initThreadPool(n)` (threaded build only).
 - `test.js`: the checks. Run `node engines/postflop/test.js` (`QUICK=1` skips the flop solve, about 35 s).
 
 The engine uses range, board and size parsing from `../postflop-js/game.js`, so the formats are the same.
@@ -38,6 +45,28 @@ Solver: Discounted CFR (postflop-solver), suit isomorphism for turn and river de
 the memory, and on this Mac it was also faster (70 s against 92 s on a 4.7 GB tree), because the
 solve is limited by memory bandwidth.
 
+## Browser mode (WebAssembly)
+
+The static site runs the same Rust code and the same default trees, as WebAssembly in a module Web Worker
+(`public/browser/postflop-worker.js`, one worker per solve). The worker sends the same messages as the native
+process, so `index.js` and the node format are the same. Build it with `tools/build-wasm.sh`
+(output `rs/target/web/`); `node tools/build-web.js` then copies it to `dist/postflop/`.
+
+| Build | Toolchain | Used when | Threads |
+|---|---|---|---|
+| `mt` | nightly, pinned in `tools/build-wasm.sh` (`nightly-2026-11-15`), `-Z build-std=panic_abort,std`, `+atomics,+bulk-memory,+mutable-globals,+simd128`, wasm-bindgen-rayon, postflop-solver `custom-alloc` | the page is cross-origin isolated (`public/browser/sw.js`) | up to 8 (`threads`, capped at the CPU count) |
+| `st` | stable, `+simd128` | no cross-origin isolation (no SharedArrayBuffer) | 1 |
+
+- Both builds give the same results as the native binary (same iterations, exploitability and strategy in the tests).
+- `custom-alloc` matters: without it the shared allocator lock made 8 threads only 1.9 times faster than one thread.
+- wasm-bindgen-cli must have the same version as the `wasm-bindgen` crate in `Cargo.lock` (0.2.130); the script
+  installs it, and the pinned nightly with `rust-src`, when they are missing. A new nightly needs a browser test.
+- Memory: wasm32 has at most 4 GB. The browser always uses compression and refuses trees above 3600 MB with
+  "out of memory: try a smaller tree". A failed allocation in the solver gives the same message, not a silent crash.
+  The page keeps only one finished postflop solve; ending a solve ends its worker and frees its memory.
+- If the WebAssembly build cannot load, the solve runs on `postflop-js` instead (smaller trees).
+- A panic stops the worker (WebAssembly has no unwinding): later node queries of that solve fail.
+
 ## Params
 
 | Param | Default | Notes |
@@ -56,7 +85,7 @@ solve is limited by memory bandwidth.
 | `mergeThreshold` | 0.1 | merges close bet sizes (PioSOLVER rule) |
 | `iterations`, `targetExploitability`, `maxSeconds` | 1000, 0.5, 600 | the solve stops at the first limit |
 | `threads` | 8 (capped at the CPU count) | |
-| `maxMemoryMB`, `compressAboveMB`, `compress` | 8000, 1000, `auto` | the solve stops with an error above `maxMemoryMB` |
+| `maxMemoryMB`, `compressAboveMB`, `compress` | 8000, 1000, `auto` | the solve stops with an error above `maxMemoryMB` (browser: 3600, `compress` true) |
 | `equity` | true | per-hand `equity` in each node |
 
 Auto sizes (by the street where the solve starts):
@@ -103,6 +132,17 @@ and the node shows the real card and the real combo names.
 | Turn `Jd8s7c2h`, default tree | 3.1 s | 220 | 0.48% | 140 MB |
 | Flop `Jd8s7c`, old JS tree | 6.8 s (JS 93 s) | 90 | 0.30% | 766 MB |
 | Flop `Jd8s7c`, default tree | 34-36 s | 100 | 0.47% | 1.6 GB (peak RSS 1.6 GB) |
+
+## Speed in the browser (Chrome, same Mac, 8 threads unless noted, default trees, target 0.5% pot)
+
+| Solve | Browser | Native | Iterations | Exploitability | Memory |
+|---|---|---|---|---|---|
+| River `Jd8s7c2h3d` | 0.26 s | 0.6 s (incl. process start) | 170 | 0.48% | < 20 MB |
+| Turn `Jd8s7c2h` | 3.5 s (1 thread: 25 s) | 2.5 s (1 thread: 17 s) | 210 | 0.49% | 71 MB |
+| Flop `Kd7c2h`, HU 100bb, SB raise 2.25, BB call | 87 to 92 s (1 thread: stops at 600 s, 98 it, 0.59%) | 62 s | 105 | 0.47% | 2.9 GB |
+| Flop `Kd7c2h`, HU 100bb, SB limp, BB check | 139 s | – | 160 | 0.46% | 2.9 GB |
+
+Browser and native give the same iterations, exploitability, EVs and root strategy on the same spot.
 
 ## Differences from postflop-js and limits
 
