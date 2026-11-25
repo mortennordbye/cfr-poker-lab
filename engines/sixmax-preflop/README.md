@@ -52,7 +52,8 @@ number of raises). The default tree has 45 groups.
   `ip` (`lib/realization.js`, `cache/realization-samples/6max-<hash>/...`).
 - Table: `buildGroupTable()` pools the samples of all terminals of a group (one per terminal and board) and gives
   R per class for IP and OOP, mixed with flat R by `m = n / (n + 5)` like heads-up. Inside a group every sample
-  counts the same (texture-weighted); there is no weighting by terminal reach.
+  counts the same (texture-weighted); there is no weighting by terminal reach. Samples whose postflop solve ended
+  above 5% pot exploitability are left out (the batch tool does not save solves above `--maxExpl`, default 3%).
 - Solve: each group with a table gets two share matrices (hero IP, hero OOP):
   `share(h, j) = E*R_ip[h] / (E*R_ip[h] + (1-E)*R_oop[j])`. Groups without samples, 3-way pots and showdowns keep
   flat R. Memory: 0.46 MB per group per thread (4 threads); all 45 groups = 21.5 MB per thread.

@@ -15,7 +15,8 @@
 //
 // Usage: node tools/calibrate-sixmax.js [--dir <samples dir>] [spot: --stack 100 --ante 0 --open 0 ...]
 //        [--groups 8 | --group "3BP CO vs BB,4BP CO vs BB"] [--terms 1] [--flops 20] [--rounds 1]
-//        [--parallel 2] [--threads 6] [--target 1] [--maxSeconds 300] [--budgetMin 0] [--iterations 1000] [--dry]
+//        [--parallel 2] [--threads 6] [--target 1] [--maxSeconds 300] [--maxExpl 3] [--budgetMin 0] [--iterations 1000] [--dry]
+// --maxExpl: a solve that ends above this exploitability (% pot) is not saved, and such an old sample is solved again.
 // --dir: sample folder (default cache/realization-samples, the folder the server reads).
 const path = require('path');
 
@@ -38,7 +39,7 @@ const OPT = {
   groups: Number(arg('groups', 8)), group: arg('group') ? String(arg('group')).split(',').map((s) => s.trim()).filter(Boolean) : null,
   terms: Number(arg('terms', 1)), flops: Number(arg('flops', 20)), rounds: Number(arg('rounds', 1)),
   parallel: Number(arg('parallel', 2)), threads: Number(arg('threads', 6)), target: Number(arg('target', 1)),
-  maxSeconds: Number(arg('maxSeconds', 300)), budgetMin: Number(arg('budgetMin', 0)), iterations: Number(arg('iterations', 1000)),
+  maxSeconds: Number(arg('maxSeconds', 300)), maxExpl: Number(arg('maxExpl', 3)), budgetMin: Number(arg('budgetMin', 0)), iterations: Number(arg('iterations', 1000)),
   dry: !!arg('dry', false),
 };
 
@@ -106,16 +107,22 @@ async function pool(items, n, fn) {
     const jobs = [];
     for (const board of flops) for (const t of chosen) {
       const old = RZ.readSample(KEY, t.key, board);
-      if (old && old.rangesHash === RZ.rangesHash(t.flop.ranges)) continue; // already sampled with these ranges
+      const good = old && !(old.solver && old.solver.exploitabilityPctPot > OPT.maxExpl);
+      if (good && old.rangesHash === RZ.rangesHash(t.flop.ranges)) continue; // already sampled with these ranges
       jobs.push({ t, board });
     }
     log(`round ${round}: ${jobs.length} solves to run (${chosen.length * flops.length - jobs.length} samples already current)`);
-    let done = 0, skipped = 0;
+    let done = 0, skipped = 0, failed = 0;
     const t0 = Date.now();
     await pool(jobs, OPT.parallel, async ({ t, board }) => {
       if (OPT.budgetMin && Date.now() - tStart > OPT.budgetMin * 60e3) { skipped++; return; }
       const { pot, stack, ranges, oop, ip } = t.flop;
       const st = await postflop.solveStats({ board, pot, stack, oop, ip, ranges, targetExploitability: OPT.target, maxSeconds: OPT.maxSeconds, threads: OPT.threads });
+      if (!(st.exploitabilityPctPot <= OPT.maxExpl)) { // not converged (time limit, busy machine): no sample
+        failed++;
+        log(`round ${round}: ${t.group} ${board} expl ${(+st.exploitabilityPctPot).toFixed(2)}% > ${OPT.maxExpl}%: not saved`);
+        return;
+      }
       const eq = st.rootEq ? null : { [oop]: RZ.flopEquities(board, ranges[oop], ranges[ip]), [ip]: RZ.flopEquities(board, ranges[ip], ranges[oop]) };
       RZ.saveSample(KEY, RZ.makeSample({ terminalKey: t.key, board, pot, ranges, stats: st, oop, ip, eq, group: t.group }));
       done++;
@@ -124,6 +131,7 @@ async function pool(items, n, fn) {
         `(${((st.solveMs || st.ms || 0) / 1000).toFixed(0)} s) | elapsed ${(el / 60).toFixed(1)} min, left ~${((el / done) * (jobs.length - done) / 60).toFixed(0)} min`);
     });
     if (skipped) log(`round ${round}: budget reached, ${skipped} solves left for a later run`);
+    if (failed) log(`round ${round}: ${failed} solves above ${OPT.maxExpl}% pot, not saved`);
 
     const currentRanges = Object.fromEntries(chosen.map((t) => [t.key, t.flop.ranges]));
     const table = RZ.buildGroupTable(KEY, { rIp: P0.rIp, rOop: P0.rOop, currentRanges });
