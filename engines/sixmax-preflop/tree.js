@@ -1,6 +1,8 @@
 'use strict';
 // Game tree for 6-max preflop. See README.md for the rules and the simplifications.
 // Seats in preflop order: 0 UTG, 1 HJ, 2 CO, 3 BTN, 4 SB, 5 BB.
+const { sha1 } = require('../../lib/platform');
+
 const POS = ['UTG', 'HJ', 'CO', 'BTN', 'SB', 'BB'];
 // Postflop order: SB acts first, BTN last. Higher = more in position.
 const POST = [2, 3, 4, 5, 0, 1];
@@ -30,6 +32,7 @@ function normalizeParams(raw = {}) {
     maxPlayers: Math.round(num(raw.maxPlayers, 2, 3, 3)),
     rIp: num(raw.rIp, 0.5, 1.5, 1.0),
     rOop: num(raw.rOop, 0.5, 1.5, 0.88),
+    realization: raw.realization === 'flat' ? 'flat' : 'calibrated',
     iterations: Math.round(num(raw.iterations, 10, 20000, 1000)),
     maxSeconds: num(raw.maxSeconds, 5, 1800, 240),
   };
@@ -185,12 +188,40 @@ function buildTree(P) {
       const last = order[order.length - 1];
       n.R = n.active.map((p) => (n.terminal.type === 'showdown' ? 1 : p === last ? P.rIp : P.rOop));
       n.order = order;
+      if (n.terminal.type === 'flop' && n.active.length === 2) {
+        n.group = groupKey(n.history, POS[order[1]], POS[order[0]]);
+        n.name = terminalName(n.group, n.history);
+      }
     }
   }
   return { nodes, root: root.idx, cap };
 }
 
-module.exports = { POS, POST, normalizeParams, buildTree };
+// Realization group of a heads-up flop terminal: pot type x (IP position, OOP position), e.g. 'SRP BTN vs BB'
+// (IP first). Pot type from the number of raises: 0 LIMP, 1 SRP, 2 3BP, 3 4BP.
+const POT_TYPES = ['LIMP', 'SRP', '3BP', '4BP'];
+function potType(history) {
+  const raises = history.filter((h) => /^(Raise|Allin)/.test(h.label)).length;
+  return POT_TYPES[Math.min(raises, 3)];
+}
+const groupKey = (history, ip, oop) => `${potType(history)} ${ip} vs ${oop}`;
+// Readable terminal name: group + the actions that put money in, e.g. 'SRP BTN vs BB (BTN 2.5 / BB call)'.
+function terminalName(group, history) {
+  const short = history.filter((h) => h.label !== 'Fold').map((h) => {
+    const m = h.label.match(/^(?:Raise|Allin) (.+)$/);
+    return `${h.pos} ${m ? m[1] : h.label.toLowerCase()}`;
+  }).join(' / ');
+  return `${group} (${short})`;
+}
+
+// Spot key: the params that define the tree (not R, iterations or time). Realization samples belong to one spot.
+const SPOT_PARAMS = ['stack', 'ante', 'open', 'sbOpen', 'threeBetIP', 'threeBetOOP', 'squeezeAdd', 'fourBet', 'coldCalls', 'sbLimp', 'maxPlayers'];
+function spotKey(raw) {
+  const P = normalizeParams(raw);
+  return '6max-' + sha1(JSON.stringify(SPOT_PARAMS.map((k) => P[k]))).slice(0, 12);
+}
+
+module.exports = { POS, POST, POT_TYPES, normalizeParams, buildTree, groupKey, terminalName, spotKey };
 
 if (require.main === module) {
   const P = normalizeParams(JSON.parse(process.argv[2] || '{}'));

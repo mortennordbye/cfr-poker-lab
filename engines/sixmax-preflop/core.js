@@ -12,12 +12,14 @@ for (let i = 0; i < H; i++) PRIOR[i] = COMBOS[i].length / 1326;
 //   WS[0]: the same times the all-in equity of h vs j (showdown).
 //   WS[1]: the same times hero's zero-sum flop share when hero is IP:  E*Rip / (E*Rip + (1-E)*Roop).
 //   WS[2]: the same times hero's zero-sum flop share when hero is OOP: E*Roop / (E*Roop + (1-E)*Rip).
-function buildMatrices(E, W, rIp, rOop) {
-  const WnT = new Float64Array(H * H), WS = [0, 1, 2].map(() => new Float64Array(H * H));
-  const share = (e, a, b) => {
-    const x = e * a, y = (1 - e) * b;
-    return x + y > 0 ? x / (x + y) : 0.5;
-  };
+//   groups (calibrated realization, optional): [{ ip: [169 R], oop: [169 R] }]. Group g adds
+//   WS[3 + 2g] (hero IP: E*Rip[h] / (E*Rip[h] + (1-E)*Roop[j])) and WS[4 + 2g] (hero OOP, the same with roles swapped).
+const share = (e, a, b) => {
+  const x = e * a, y = (1 - e) * b;
+  return x + y > 0 ? x / (x + y) : 0.5;
+};
+function buildMatrices(E, W, rIp, rOop, groups = []) {
+  const WnT = new Float64Array(H * H), WS = Array.from({ length: 3 + 2 * groups.length }, () => new Float64Array(H * H));
   for (let h = 0; h < H; h++) {
     let row = 0;
     for (let j = 0; j < H; j++) row += W[h * H + j];
@@ -27,6 +29,10 @@ function buildMatrices(E, W, rIp, rOop) {
       WS[0][j * H + h] = wn * e;
       WS[1][j * H + h] = wn * share(e, rIp, rOop);
       WS[2][j * H + h] = wn * share(e, rOop, rIp);
+      groups.forEach((g, k) => {
+        WS[3 + 2 * k][j * H + h] = wn * share(e, g.ip[h], g.oop[j]);
+        WS[4 + 2 * k][j * H + h] = wn * share(e, g.oop[h], g.ip[j]);
+      });
     }
   }
   return { WnT, WS };
@@ -43,8 +49,9 @@ function mv(T, x, out) {
 }
 
 class Ref {
-  constructor(v) { this.v = v || new Float64Array(H); this.A = [null, null, null]; this.B = null; this.sa = [-1, -1, -1]; this.sb = -1; }
-  inv() { this.sa[0] = this.sa[1] = this.sa[2] = -1; this.sb = -1; }
+  // A[kind]: cached product with WS[kind] (allocated on first use), sa[kind]: its stamp.
+  constructor(v) { this.v = v || new Float64Array(H); this.A = []; this.B = null; this.sa = []; this.sb = -1; }
+  inv() { this.sa.fill(-1); this.sb = -1; }
 }
 
 class Core {
@@ -65,7 +72,7 @@ class Core {
   }
   getRef(idx) { let r = this.refs.get(idx); if (!r) { r = new Ref(); this.refs.set(idx, r); } return r; }
   B(ref) { if (ref.sb !== this.stamp) { if (!ref.B) ref.B = new Float64Array(H); mv(this.WnT, ref.v, ref.B); ref.sb = this.stamp; } return ref.B; }
-  // kind 0 = showdown equity, 1 = flop share as IP, 2 = flop share as OOP
+  // kind 0 = showdown equity, 1 = flop share as IP, 2 = flop share as OOP, 3+ = calibrated groups (buildMatrices)
   A(ref, kind = 0) {
     if (ref.sa[kind] !== this.stamp) { if (!ref.A[kind]) ref.A[kind] = new Float64Array(H); mv(this.WS[kind], ref.v, ref.A[kind]); ref.sa[kind] = this.stamp; }
     return ref.A[kind];
@@ -113,7 +120,8 @@ class Core {
     if (act.length === 2) {
       for (let k = 0; k < 2; k++) {
         const p = act[k], o = act[1 - k];
-        const kind = n.terminal.type === 'showdown' ? 0 : p === n.order[1] ? 1 : 2;
+        // n.kIp / n.kOop: the calibrated group matrices of this terminal (set in worker.js), else flat R.
+        const kind = n.terminal.type === 'showdown' ? 0 : p === n.order[1] ? n.kIp || 1 : n.kOop || 2;
         const A = this.A(reach[o], kind), B = this.B(reach[o]);
         const pr = n.pot, ip = n.inv[p];
         const V = out.V[p], M = out.M[p];
@@ -155,7 +163,11 @@ class Core {
       if (this.mode === 'eval') {
         const r = {};
         for (const q of n.active) r[q] = Float32Array.from(reach[q].v);
-        this.evalOut.set(n.idx, { ranges: r });
+        // Share of all deals that reach this terminal (folded players included through F).
+        const p0 = n.active[0], rv = reach[p0].v, M0 = out.M[p0];
+        let mass = 0;
+        for (let h = 0; h < H; h++) mass += PRIOR[h] * rv[h] * M0[h];
+        this.evalOut.set(n.idx, { ranges: r, mass });
       }
       return out;
     }
@@ -241,4 +253,4 @@ class Core {
   }
 }
 
-module.exports = { Core, Ref, buildMatrices, mv, PRIOR, H };
+module.exports = { Core, Ref, buildMatrices, mv, share, PRIOR, H };

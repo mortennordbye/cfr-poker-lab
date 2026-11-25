@@ -143,7 +143,7 @@ value each player's hand as `pot * equity * R`, where `R` = equity realization:
 2. `engines/<kind>/test.js`: runnable with `node engines/<kind>/test.js`, prints checks and exits non-zero on failure.
 3. `engines/<kind>/README.md`: tree, algorithm, simplifications, solve time, known limits (short).
 
-## Realization samples (hu-preflop calibration)
+## Realization samples (hu-preflop and sixmax-preflop calibration)
 
 - A `POST /api/solve` for a postflop engine may carry `params.source = { kind: 'hu-preflop', spotKey, terminalKey }`
   (from `node.terminal.spotKey` / `node.terminal.key` of a hu-preflop flop terminal). The server strips it before the
@@ -155,6 +155,14 @@ value each player's hand as `pot * equity * R`, where `R` = equity realization:
 - Postflop engines used for calibration must give `stats.rootEv = { oop: {combo: ev}, ip: {...} }` (bb won from the
   flop root) and should give `stats.rootEq` (same shape, equity vs the opponent range), plus `solveStats(params)`.
 - `lib/realization.js` builds the table; `tools/calibrate-hu.js` writes the same samples (batch fill).
+- 6-max: `params.source = { kind: 'sixmax-preflop', spotKey, terminalKey, group }` (from `node.terminal.spotKey`,
+  `.key`, `.group` of a heads-up sixmax-preflop flop terminal; `spotKey` = `6max-<hash>`, `key` = node id). The sample is
+  the same file, plus `group`, `oop` and `ip` (positions, e.g. `ev: { BTN: {...}, BB: {...} }`). A group is
+  `<pot type> <IP pos> vs <OOP pos>`, pot type `LIMP` | `SRP` | `3BP` | `4BP` (e.g. `SRP BTN vs BB`).
+  `sample.flops` in the status answer counts the samples of the group, and the answer adds `sample.group`.
+  `buildGroupTable()` pools all terminals of a group; `tools/calibrate-sixmax.js` is the batch fill.
+  6-max flop terminals also carry `terminal.name`, `terminal.mass` (share of all deals that reach it) and
+  `terminal.calibrated`. A `spotKey` must match `[\w-]{1,64}`, else no sample is saved.
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
@@ -165,3 +173,101 @@ Idle filler (`idle.js`, off by default, setting kept in `cache/idle.json`): afte
 API requests (other than `/api/idle`) and with no solve running, it solves one flop for the last used hu-preflop
 spot (terminal with the best reach mass / (samples + 1), first `flopSubset(20)` board not sampled) in a child
 process, with kind `postflop` if loaded, else `postflop-js`. Any other API request kills it.
+
+## Flop reports
+
+A flop report solves one heads-up flop spot on many flops and aggregates the root results (`lib/reports.js`, CLI
+`tools/flop-report.js`). Runs in local mode only. The static site answers `GET /api/reports` and `GET /api/report/:id`
+read-only from the precomputed data (see "Precomputed data"); `POST /api/report` answers 404 there.
+
+Input (`POST /api/report` body):
+
+```js
+{ kind: 'hu-preflop' | 'sixmax-preflop', params: { ...preflop params }, terminalKey: 'SB:Raise 2.5/BB:Call' }
+// terminalKey = node.terminal.key, or the node id of a heads-up flop terminal
+// or a postflop spot:
+{ spot: { ranges: { BB: {...} | 'range text', SB: ... }, pot: 5, stack: 97.5, oop: 'BB', ip: 'SB' } }
+// plus, for both:
+  flops: 25 | 49 | 95,                         // lib/flops.js flopSubset(n); default 25
+  tree: { flopBets, flopRaises, turnBets, turnRaises, riverBets, riverRaises, donkBets, raiseCap, allinSpr,
+          iterations, targetExploitability /* default 1 */, maxSeconds /* default 300 */, threads /* default 4 */ }
+```
+
+- One postflop solve at a time (engine `postflop`, else `postflop-js`), 4 threads by default. Reports queue behind each other.
+- A flop from a `hu-preflop` terminal also saves a realization sample (same files as "Solve flop").
+- Storage: `cache/reports/<id>.json` (`REPORTS_DIR`), written after each flop. `id` = hash of the input without
+  `threads`. The same input gives the same id: a stopped report continues, a finished one is returned as it is.
+  The spot (ranges, pot, stack) is fixed when the report starts, so new calibration samples do not change it.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| POST | `/api/report` | input above | `{ reportId, status: 'queued' \| 'running' \| 'done' }`, 400 `{ error }` on bad input |
+| GET | `/api/report/:id` | | report (below), 404 if unknown |
+| GET | `/api/reports` | | `[{ id, status, name, done, total, progress, createdAt, updatedAt, runMs, input }]`, newest first |
+
+Report:
+
+```js
+{
+  id, status: 'queued' | 'running' | 'done' | 'error' | 'stopped',  // stopped: not running, not done (POST again)
+  message, error, progress /* 0..1 */, done, total, current /* board being solved */, etaMs,
+  name /* 'Raised pot (SB 2.5 / BB call)' */, createdAt, updatedAt, runMs /* solve time of all runs */, engine,
+  input, tree, flops: ['Kh7h2h', ...],
+  spot: { oop, ip, pot, stack, ranges, source: { kind, spotKey, terminalKey, name, mass } | null },
+  results: [{                                    // one per finished flop, in the order of flops
+    board: 'Kh7h2h',
+    texture: { suits: 'monotone' | 'two-tone' | 'rainbow', pairing: 'unpaired' | 'paired' | 'trips',
+               high: 'K', highRank: 11, ranks: [11, 5, 0], group: 'mono-unpaired-KQ' },
+    oop: { player: 'BB', actions: [{ label: 'Check', type: 'check', amount: 0, freq: 0.62 }, ...], bet: 0.38 },
+    ip: { player: 'SB', actions: [...], bet } | null,   // IP at the node after OOP checks
+    ev: { oop, ip },                                     // bb won from the flop root (shares of the pot)
+    eq: { oop, ip },                                     // range equity
+    exploitabilityPctPot, iterations, ms, sample: 'saved' | ... (hu-preflop source only),
+  }],
+  summary: [{                                    // mean over the flops of each group (each flop = equal share)
+    key: 'all' | 'monotone' | 'two-tone' | 'rainbow' | 'unpaired' | 'paired' | 'trips' | 'high-A' ... 'high-9',
+    label, by: null | 'suits' | 'pairing' | 'high', n,
+    oop: { n, actions: [{ label, type, amount, freq }], bet }, ip: same | null,
+    ev: { oop, ip }, eq: { oop, ip }, exploitabilityPctPot,
+  }],
+}
+```
+
+A batch run can stop with flops left (`--shard`, `--limit`, `--budgetMin` of `tools/flop-report.js`): the file then
+has `status: 'partial'`, which the API shows as `stopped`. `POST /api/report` with the same input continues it.
+
+## Precomputed data
+
+Batch solves run on GitHub runners (`.github/workflows/precompute.yml`, manual start; a pull request that changes the
+pipeline runs a smoke test without publishing). The results are in the release with tag `data`, which each run
+replaces:
+
+- `cfr-data.tar.gz`: the layout of `cache/`: `reports/<id>.json` (same format and id as a local run of the same
+  input) and `realization-samples/<spotKey>/<terminal hash>/<board>.json` (same files as a local solve writes).
+- `manifest.json`:
+
+```js
+{
+  version: 1, createdAt, gitSha,
+  reports: [{ id, name, status: 'done' | 'partial', done, total, flops /* = total */, progress, createdAt, updatedAt,
+              runMs /* sum of the flop solve times */, input }],
+  samples: [{ spotKey, group /* 6-max group, or the heads-up terminal key */, kind: 'sixmax-preflop' | 'hu-preflop', count }],
+  totals: { reports, reportsDone, samples },
+}
+```
+
+Pipeline: **plan** (`tools/precompute-plan.js`: downloads the data, runs the tool's `--plan` mode, which solves no
+flop, and gives each task min(missing work, shards) shards; nothing missing = no shards) → **build** (native Rust
+engine, once) → **shard** (one runner each, `--shard i/n` = items i-1, i-1+n, ... of the missing flops or jobs,
+`lib/shard.js`; each flop is saved when done, `--budgetMin` stops before the 350-minute job limit) → **merge**
+(`tools/merge-data.js`: old data + shard outputs) → **publish** (merges once more with the newest data, then replaces
+the release assets and starts the Pages build).
+
+- Spots come from `tools/presets.json` (`--preset`). The spot of a report is solved without samples (flat
+  realization), so each run of the same input gets the same spot. 6-max jobs take their terminals and ranges from
+  the flat preflop solve (`tools/calibrate-sixmax.js` round 1).
+- Merge rules: the files of a report id with the newest `createdAt` are joined (a `force` run makes a new one,
+  which replaces the old results); a sample path that two inputs have keeps the newer sample (`createdAt`).
+- `tools/fetch-data.js` (`just data`, `just data-docker`) unpacks the data into `cache/` and never overwrites a file
+  that exists. The Pages build puts `reports/` and `manifest.json` in `dist/data/`; the static site reads them
+  (`public/browser/local-api.js`).

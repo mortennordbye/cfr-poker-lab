@@ -1,0 +1,28 @@
+{
+  "flop-report": {
+    "hu-100bb-srp": {
+      "title": "Heads-up 100bb, SB raises 2.5, BB calls",
+      "kind": "hu-preflop", "params": {}, "terminal": "SB:Raise 2.5/BB:Call"
+    },
+    "smoke": {
+      "title": "Smoke test: heads-up SRP, tiny tree",
+      "kind": "hu-preflop", "params": {}, "terminal": "SB:Raise 2.5/BB:Call",
+      "tree": { "flopBets": "50", "flopRaises": "allin", "turnBets": "50", "turnRaises": "allin", "riverBets": "50",
+        "riverRaises": "allin", "donkBets": "none", "raiseCap": 1, "iterations": 30, "targetExploitability": 5, "maxSeconds": 60 }
+    }
+  },
+  "sixmax-calibration": {
+    "cash-100bb-top5": {
+      "title": "6-max cash 100bb, the 5 groups with most reach",
+      "spot": { "stack": 100 }, "groups": 5
+    },
+    "mtt-ante1-co-vs-bb": {
+      "title": "6-max MTT 100bb, ante 1 (HJ 2.1, CO 3-bet 8.4): CO vs BB groups",
+      "spot": { "stack": 100, "ante": 1 }, "group": "3BP CO vs BB,4BP CO vs BB"
+    },
+    "smoke": {
+      "title": "Smoke test: 6-max cash 100bb, the 4-bet pot group with most reach, short preflop solve",
+      "spot": { "stack": 100 }, "group": "4BP BTN vs SB", "iterations": 200, "target": 5, "maxSeconds": 60, "maxExpl": 100
+    }
+  }
+}

@@ -41,6 +41,37 @@ Node ids are the action path: `F` fold, `C` call, `X` check, `R<to>` raise, `A` 
   opponent in 3-way pots, each other player's hand is conditioned only on the hero's hand
   (independent of the other opponents). Folded players' ranges are included this way.
 
+## Calibrated realization (per hand, per group)
+
+Param `realization` (`calibrated` default, or `flat`). Each heads-up flop terminal belongs to a realization group:
+pot type x IP position x OOP position, e.g. `SRP BTN vs BB` (IP first; pot type `LIMP`, `SRP`, `3BP`, `4BP` by the
+number of raises). The default tree has 45 groups.
+
+- Samples: a postflop solve with `params.source = { kind: 'sixmax-preflop', spotKey, terminalKey, group }` (from
+  `terminal.spotKey`, `terminal.key`, `terminal.group`) saves a sample, same format as heads-up plus `group`, `oop`,
+  `ip` (`lib/realization.js`, `cache/realization-samples/6max-<hash>/...`).
+- Table: `buildGroupTable()` pools the samples of all terminals of a group (one per terminal and board) and gives
+  R per class for IP and OOP, mixed with flat R by `m = n / (n + 5)` like heads-up. Inside a group every sample
+  counts the same (texture-weighted); there is no weighting by terminal reach. Samples whose postflop solve ended
+  above 5% pot exploitability are left out (the batch tool does not save solves above `--maxExpl`, default 3%).
+- Solve: each group with a table gets two share matrices (hero IP, hero OOP):
+  `share(h, j) = E*R_ip[h] / (E*R_ip[h] + (1-E)*R_oop[j])`. Groups without samples, 3-way pots and showdowns keep
+  flat R. Memory: 0.46 MB per group per thread (4 threads); all 45 groups = 21.5 MB per thread.
+- 0 samples (or `realization: 'flat'`) gives exactly the old result and the old cache file name; with samples the
+  cache key adds the table version.
+- Flop terminals carry `spotKey`, `key` (node id), `group`, `name`, `mass` (share of all deals that reach it),
+  `calibrated`. `stats.calibration` lists the groups (same shape as hu-preflop; `terminals` = 12 groups with most
+  reach plus all groups with samples, `groups` = all).
+- Batch fill: `tools/calibrate-sixmax.js` (top groups by reach on the 20-flop subset, native Rust engine). Round 1 takes
+  terminals and ranges from the flat preflop solve, which does not change when samples are added, so a run stopped by
+  `--budgetMin` resumes with the samples it saved. On GitHub runners: `--plan` writes the missing jobs, `--jobs` with
+  `--shard i/n` solves one shard of them (`.github/workflows/precompute.yml`, CONTRACT.md "Precomputed data").
+- Measured (2026-11-25, 4 efficiency cores): a flop solve takes 80-310 s in SRP pots, 5-90 s in 3-bet and 4-bet pots.
+  With 17 samples in the 5 largest cash groups, BTN opens 39.4% (flat 36.7%), UTG 18.1% (16.8%), SB 47.3% (50.1%).
+  MTT (ante 1, HJ 2.1, CO 3-bet 8.4), 10 samples in `4BP CO vs BB` and `3BP CO vs BB`: BB raises AA to 21 99.7%
+  (flat: allin 99.8%); BB total Fold 90.2 / Call 7.5 / Raise 21 2.3 / Allin 0.0 (flat 93.1 / 4.5 / 0.0 / 2.3).
+  Exploitability stays below 0.1% pot; share matrices 3.2 MB per thread for 5 groups.
+
 ## Algorithm
 
 Vector CFR+ (regret floor at 0, linear average strategy, simultaneous updates) over 169 classes
