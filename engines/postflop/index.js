@@ -11,7 +11,9 @@ const G = require('../postflop-js/game');
 const { cardName } = require('../../lib/equity');
 
 const RS_DIR = path.join(__dirname, 'rs');
-const BIN = path.join(RS_DIR, 'target', 'release', process.platform === 'win32' ? 'postflop-engine.exe' : 'postflop-engine');
+// POSTFLOP_BIN: a prebuilt binary (the container image sets it); then cargo is never run.
+const PREBUILT = process.env.POSTFLOP_BIN || null;
+const BIN = PREBUILT || path.join(RS_DIR, 'target', 'release', process.platform === 'win32' ? 'postflop-engine.exe' : 'postflop-engine');
 const SCALE = 100; // chips per bb inside the solver (amounts are integers: 0.01 bb steps)
 const STREET = { 3: 'flop', 4: 'turn', 5: 'river' };
 
@@ -147,6 +149,7 @@ function newestMtime(dir) {
   return t;
 }
 function needsBuild() {
+  if (PREBUILT) return false;
   if (!fs.existsSync(BIN)) return true;
   const bin = fs.statSync(BIN).mtimeMs;
   return newestMtime(path.join(RS_DIR, 'src')) > bin || fs.statSync(path.join(RS_DIR, 'Cargo.toml')).mtimeMs > bin;

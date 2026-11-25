@@ -10,6 +10,10 @@ const RZ = require('./lib/realization');
 const { createIdleFiller } = require('./idle');
 
 const PORT = Number(process.env.PORT) || 8787;
+// 127.0.0.1 by default: the app has no login. The container sets 0.0.0.0 and publishes the port on loopback only.
+const HOST = process.env.HOST || '127.0.0.1';
+// Finished solves kept in memory (a flop solve holds ~1.6 GB). The container lowers this.
+const MAX_SOLVES = Math.max(1, Number(process.env.MAX_SOLVES) || 4);
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
@@ -97,7 +101,7 @@ loadEquity().then(({ E, W }) => {
         solves.set(solveId, job);
         // Keep memory bounded: a flop solve can use ~1 GB. Drop the oldest finished solves.
         for (const [id, j] of solves) {
-          if (solves.size <= 4) break;
+          if (solves.size <= MAX_SOLVES) break;
           if (j.status !== 'running') {
             solves.delete(id);
             // Engines that hold resources (e.g. a solver process) free them here.
@@ -145,5 +149,5 @@ loadEquity().then(({ E, W }) => {
       console.error(err);
       json(res, 500, { error: String(err.message || err) });
     }
-  }).listen(PORT, '127.0.0.1', () => console.log(`Solver running at http://localhost:${PORT}`));
+  }).listen(PORT, HOST, () => console.log(`Solver running at http://localhost:${PORT}` + (HOST !== '127.0.0.1' ? ` (listening on ${HOST})` : '')));
 });
