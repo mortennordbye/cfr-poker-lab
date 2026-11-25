@@ -119,7 +119,7 @@ function showHand(k) {
 async function solve() {
   $('solve').disabled = true; $('solve').textContent = 'Solving…';
   const q = new URLSearchParams({ stack: $('stack').value, ante: $('ante').value, iterations: $('iters').value });
-  try { data = await (await fetch('/api/pushfold?' + q)).json(); render(); }
+  try { data = await (await (window.cfrLocalApi ? window.cfrLocalApi.fetch : fetch)('/api/pushfold?' + q)).json(); render(); }
   finally { $('solve').disabled = false; $('solve').textContent = 'Solve'; }
 }
 

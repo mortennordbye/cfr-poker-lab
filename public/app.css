@@ -12,6 +12,12 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.35 -ap
 button { font: inherit; color: inherit; }
 .hidden { display: none !important; }
 .spacer { flex: 1; }
+/* Browser mode (static site): speed note above the header. */
+.banner { display: flex; align-items: center; gap: 12px; padding: 7px 14px; background: #2a2418; border-bottom: 1px solid #4a3f22; color: #e9dcb8; font-size: 12px; flex: none; }
+.banner span { flex: 1; }
+.banner a { color: #f0c96a; }
+.banner code { font: 12px ui-monospace, Menlo, monospace; background: #00000040; padding: 1px 5px; border-radius: 3px; }
+.banner .close { background: none; border: 0; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px; }
 
 header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex: none; }
 .brand { font-weight: 700; font-size: 15px; letter-spacing: .02em; }

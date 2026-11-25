@@ -23,8 +23,10 @@
   };
 
   // ---------- API ----------
+  // On the static site (tools/build-web.js) the page answers /api/ itself: window.cfrLocalApi.
+  const send = window.cfrLocalApi ? window.cfrLocalApi.fetch : fetch;
   async function api(path, body) {
-    const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+    const r = await send(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined);
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || r.statusText);
     return j;
