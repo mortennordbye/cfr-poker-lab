@@ -105,6 +105,22 @@ node tools/calibrate-hu.js --stack 100 --sbOpen 2.25 --limp true
 
 <img src="docs/screenshots/postflop-flop.png" alt="Postflop node on Jd 8s 7c" width="800" />
 
+### Flop reports
+
+A flop report solves one flop spot on 25, 49 or 95 representative flops and shows how the strategy changes with
+the board: the OOP strategy at the flop root, the IP strategy after a check, EV and equity, per flop and by
+texture group. Local mode only (`node server.js` or Docker), one solve at a time; a stopped report continues
+where it was. A report from a heads-up preflop terminal also saves calibration samples.
+
+```bash
+node tools/flop-report.js --list                                   # flop terminals of the heads-up 100bb spot
+node tools/flop-report.js --terminal 'SB:Raise 2.5/BB:Call' --flops 25
+```
+
+API: `POST /api/report`, `GET /api/report/:id`, `GET /api/reports` (see [CONTRACT.md](CONTRACT.md#flop-reports)).
+Measured on an M-series Mac (8 threads, target 1% pot): the 25-flop report of the heads-up 100bb raised pot
+took 33 min of solve time (median 40 s per flop, 16 s to 8 min; the slow flops ran while other batch jobs used the CPU).
+
 ---
 
 ## Repository structure
