@@ -131,3 +131,54 @@ dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; text-align: right; font-
 .calib .row .n { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
 .calib .meter { height: 8px; background: var(--dim); border-radius: 2px; overflow: hidden; }
 .calib .meter div { height: 100%; background: var(--call); }
+
+/* ---- Views over the grid: Ranges, Table, Breakdown, Equity chart ---- */
+.view { width: var(--vw, var(--size)); height: var(--size); display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.vempty { margin: auto; color: var(--muted); font-size: 14px; text-align: center; max-width: 360px; }
+.cell.dimf { opacity: .18; }
+.rgrids { display: flex; gap: 10px; }
+.rside { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.rhd { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rhd b { color: var(--text); }
+.grid.mini { width: 100%; height: auto; aspect-ratio: 1; }
+.grid.mini .cell .nm { font-size: clamp(6px, 24cqw, 12px); font-weight: 500; }
+.rinfo { color: var(--muted); font-size: 12px; min-height: 18px; }
+.rinfo b { color: var(--text); }
+.tscroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+.htable, .stable { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+.htable th, .stable th { position: sticky; top: 0; background: var(--panel2); color: var(--muted); font-weight: 600; text-align: right; padding: 5px 7px; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.htable th[data-col] { cursor: pointer; user-select: none; }
+.htable th[data-col]:hover, .htable th.sorted { color: var(--text); }
+.htable td, .stable td { text-align: right; padding: 3px 7px; border-bottom: 1px solid #25262d; white-space: nowrap; }
+.htable .l, .stable .l { text-align: left; }
+.htable tr.hrow:hover td { background: #262830; }
+.htable tr.crow td { color: var(--muted); background: #17181d; }
+.htable tr.z td { color: #555862; }
+.htable tr.tot td { border-top: 1px solid var(--line); font-weight: 600; }
+.htable .tw { display: inline-block; width: 12px; color: var(--muted); cursor: pointer; }
+.htable .mini, .stable .mini { display: inline-flex; gap: 2px; vertical-align: middle; }
+.htable .mini .card { width: 17px; height: 21px; font-size: 10px; }
+.card.inl { display: inline-flex; width: 18px; height: 22px; font-size: 11px; vertical-align: middle; margin-right: 2px; }
+.card.inl small { font-size: 8px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+.bcell { width: 34%; min-width: 80px; }
+.sbar { display: flex; height: 10px; border-radius: 2px; overflow: hidden; background: var(--dim); }
+.legend { display: flex; gap: 12px; color: var(--muted); font-size: 12px; }
+.eqhead { display: flex; gap: 16px; align-items: center; font-size: 13px; }
+.eqk { display: inline-flex; align-items: center; gap: 2px; }
+.eqsvg { width: 100%; height: auto; max-height: calc(var(--size) - 70px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+.eqsvg .gl { stroke: #2a2c34; stroke-width: 1; }
+.eqsvg .ax { fill: var(--muted); font-size: 11px; }
+
+/* ---- Right panel: Summary, Filters, Blockers ---- */
+.stable { font-size: 11px; }
+.stable th { position: static; padding: 4px 5px; }
+.stable td { padding: 3px 5px; }
+.stable .bcell { width: 30%; min-width: 60px; }
+.fsec { margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
+.fsec .fh { width: 100%; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 3px 10px; cursor: pointer; font-size: 12px; color: var(--muted); }
+.chip:hover { border-color: #4a4d58; color: var(--text); }
+.chip.on { background: #3a2a2a; border-color: var(--accent); color: var(--text); }
+.chip.idle { opacity: .6; }
+.ghost:disabled { opacity: .4; cursor: default; }
