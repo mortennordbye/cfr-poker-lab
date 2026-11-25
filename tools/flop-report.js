@@ -5,15 +5,29 @@
 // Usage:
 //   node tools/flop-report.js --terminal 'SB:Raise 2.5/BB:Call' [--kind hu-preflop] [--params '{"stack":100}']
 //        [--flops 25] [--target 1] [--maxSeconds 300] [--threads 4] [--tree '{"flopBets":"33,75"}']
+//   node tools/flop-report.js --preset hu-100bb-srp [--flops 95]   spot and tree from tools/presets.json
 //   node tools/flop-report.js --spot spot.json [--flops 25]       spot.json = { ranges, pot, stack, oop, ip }
 //   node tools/flop-report.js --list [--kind hu-preflop] [--params ...]   lists the flop terminals of the spot
-// Env: REPORTS_DIR (report files), REALIZATION_SAMPLES_DIR (samples).
+// Batch runs on many machines (.github/workflows/precompute.yml):
+//   --plan plan.json [--force]   solve no flop: write the report file with its spot (force: a new one without the
+//                                old results) and plan.json { job, id, name, total, done, count, todo }
+//   --shard i/n                  solve only shard i of n of the missing flops (round robin, lib/shard.js)
+//   --limit N                    only the first N missing flops (before the shard split; smoke tests)
+//   --budgetMin M                start no flop after M minutes (the flops done are saved)
+// Folders: --reports-dir (or env REPORTS_DIR) for report files, --samples-dir (or env REALIZATION_SAMPLES_DIR) for
+// realization samples. With env GITHUB_STEP_SUMMARY, the time per flop goes into the job summary.
 const fs = require('fs');
 const path = require('path');
-const R = require('../lib/reports');
 
 const argv = process.argv.slice(2);
 const arg = (name, def) => { const i = argv.indexOf('--' + name); return i < 0 ? def : (argv[i + 1] === undefined || argv[i + 1].startsWith('--') ? true : argv[i + 1]); };
+// The folders must be set before lib/reports.js and lib/realization.js load.
+if (arg('reports-dir')) process.env.REPORTS_DIR = path.resolve(String(arg('reports-dir')));
+if (arg('samples-dir')) process.env.REALIZATION_SAMPLES_DIR = path.resolve(String(arg('samples-dir')));
+
+const R = require('../lib/reports');
+const { parseShard } = require('../lib/shard');
+
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const pct = (x) => (x === null || x === undefined ? '   -' : (100 * x).toFixed(1).padStart(5) + '%');
 
@@ -22,9 +36,23 @@ for (const dir of ['hu-preflop', 'sixmax-preflop', 'postflop', 'postflop-js']) {
   try { const e = require(path.join(__dirname, '..', 'engines', dir, 'index.js')); engines[e.kind] = e; } catch (e) { /* not loaded */ }
 }
 
+function preset() {
+  const name = arg('preset');
+  if (!name) return {};
+  const all = JSON.parse(fs.readFileSync(path.join(__dirname, 'presets.json'), 'utf8'))['flop-report'];
+  if (!all[name]) throw new Error(`unknown preset ${name}; presets: ${Object.keys(all).join(', ')}`);
+  return all[name];
+}
+
+// Appends markdown to the GitHub job summary (if the env names one).
+function summaryOut(md) {
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
+}
+
 (async () => {
-  const kind = arg('kind', 'hu-preflop');
-  const params = JSON.parse(arg('params', '{}'));
+  const P = preset();
+  const kind = arg('kind', P.kind || 'hu-preflop');
+  const params = arg('params') ? JSON.parse(arg('params')) : P.params || {};
   if (arg('list')) {
     const res = await engines[kind].solve(params, () => {});
     const seen = new Set(), out = [];
@@ -39,26 +67,50 @@ for (const dir of ['hu-preflop', 'sixmax-preflop', 'postflop', 'postflop-js']) {
     for (const t of out.sort((a, b) => (b.mass || 0) - (a.mass || 0))) console.log(`${t.key.padEnd(40)} pot ${String(t.pot).padEnd(6)} reach ${t.mass === undefined ? '-' : (100 * t.mass).toFixed(1) + '%'}  ${t.name}`);
     process.exit(0);
   }
-  const tree = JSON.parse(arg('tree', '{}'));
+  const tree = { ...(P.tree || {}), ...JSON.parse(arg('tree', '{}')) };
   for (const [k, a] of [['targetExploitability', 'target'], ['maxSeconds', 'maxSeconds'], ['threads', 'threads'], ['iterations', 'iterations']]) {
     if (arg(a) !== undefined) tree[k] = Number(arg(a));
   }
+  const flops = Number(arg('flops', P.flops || 25));
   const input = arg('spot')
-    ? { spot: JSON.parse(fs.readFileSync(arg('spot'), 'utf8')), flops: Number(arg('flops', 25)), tree }
-    : { kind, params, terminalKey: arg('terminal'), flops: Number(arg('flops', 25)), tree };
+    ? { spot: JSON.parse(fs.readFileSync(arg('spot'), 'utf8')), flops, tree }
+    : { kind, params, terminalKey: arg('terminal', P.terminal), flops, tree };
+  const limit = Number(arg('limit', 0)) || 0;
+  const shard = parseShard(arg('shard'));
 
   const reports = R.createReports({ engines, log });
+
+  if (arg('plan')) {
+    const r = await reports.prepare(input, { force: !!arg('force') });
+    const todo = R.pendingFlops(r, limit);
+    const plan = { job: 'flop-report', id: r.id, name: r.name, total: r.flops.length, done: r.results.length, count: todo.length, todo };
+    fs.writeFileSync(String(arg('plan')), JSON.stringify(plan, null, 1));
+    log(`plan: report ${r.id} (${r.name}), ${r.results.length} of ${r.flops.length} flops done, ${todo.length} to solve; file ${path.join(reports.dir, r.id + '.json')}`);
+    process.exit(0);
+  }
+
   const t0 = Date.now();
-  const { reportId } = reports.start(input);
-  log(`report ${reportId}, file ${path.join(reports.dir, reportId + '.json')}`);
+  const budgetMin = Number(arg('budgetMin', 0)) || 0;
+  const { reportId } = reports.start(input, { shard, limit, deadline: budgetMin ? t0 + budgetMin * 60e3 : 0 });
+  const before = new Set(((reports.status(reportId) || {}).results || []).map((x) => x.board));
+  log(`report ${reportId}, file ${path.join(reports.dir, reportId + '.json')}${shard ? `, shard ${shard.index}/${shard.count}` : ''}`);
   let s;
   for (;;) {
     await new Promise((r) => setTimeout(r, 500));
     s = reports.status(reportId);
-    if (s.status === 'done' || s.status === 'error') break;
+    if (s.status === 'done' || s.status === 'partial' || s.status === 'error') break;
   }
   if (s.status === 'error') { console.error('report failed:', s.error || s.message); process.exit(1); }
-  log(`done: ${s.total} flops, solve time ${(s.runMs / 1000).toFixed(0)} s in all runs, this run ${((Date.now() - t0) / 1000).toFixed(0)} s wall`);
+  const wallS = (Date.now() - t0) / 1000;
+  const fresh = s.results.filter((x) => !before.has(x.board));
+  log(`${s.status}: ${s.done} of ${s.total} flops, ${fresh.length} solved in this run, solve time ${(s.runMs / 1000).toFixed(0)} s in all runs, this run ${wallS.toFixed(0)} s wall`);
+  summaryOut([
+    `### Flop report ${reportId}${shard ? ` shard ${shard.index}/${shard.count}` : ''}: ${s.name}`,
+    '', `${fresh.length} flops solved in ${wallS.toFixed(0)} s wall time (${(wallS / 60).toFixed(1)} min); report ${s.done} of ${s.total} flops.`,
+    '', '| board | solve s | iterations | exploitability % pot |', '| --- | ---: | ---: | ---: |',
+    ...fresh.map((x) => `| ${x.board} | ${(x.ms / 1000).toFixed(1)} | ${x.iterations} | ${x.exploitabilityPctPot} |`),
+    fresh.length ? `| mean | ${(fresh.reduce((a, x) => a + x.ms, 0) / fresh.length / 1000).toFixed(1)} | | |` : '', '',
+  ].join('\n'));
   console.log(`\n${s.name}  (pot ${s.spot.pot}, stack ${s.spot.stack}, ${s.spot.oop} OOP vs ${s.spot.ip} IP)`);
   console.log('group                n   OOP bet  IP bet(after check)  EV OOP  EV IP   Eq OOP  Eq IP   expl');
   for (const g of s.summary) {

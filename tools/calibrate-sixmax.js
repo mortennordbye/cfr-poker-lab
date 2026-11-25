@@ -19,31 +19,58 @@
 // --maxExpl: a solve that ends above this exploitability (% pot) is not saved, and such an old sample is solved again.
 // --start: preflop solve that gives the terminals and ranges of round 1: flat (default; stays the same while samples
 //          are added, so chunked runs resume) or calibrated (uses the samples that exist).
-// --dir: sample folder (default cache/realization-samples, the folder the server reads).
+// --dir (or --samples-dir): sample folder (default cache/realization-samples, the folder the server reads).
+// --preset <name>: spot and options from tools/presets.json ("sixmax-calibration"); flags given on the command line win.
+//
+// Batch runs on many machines (.github/workflows/precompute.yml):
+//   --plan plan.json [--force]   round 1 without solves: pick the terminals and write the missing jobs (board x
+//                                terminal, sorted by group) with their spots to plan.json. --force: also jobs whose
+//                                sample exists. No final preflop solve.
+//   --jobs plan.json --shard i/n solve shard i of n of the plan's jobs (round robin, lib/shard.js), save the samples,
+//                                no preflop solve. --budgetMin works the same.
+// With env GITHUB_STEP_SUMMARY, the time per flop goes into the job summary.
+const fs = require('fs');
 const path = require('path');
 
 // ---- args ----
 const argv = process.argv.slice(2);
 const arg = (name, def) => { const i = argv.indexOf('--' + name); return i < 0 ? def : (argv[i + 1] === undefined || argv[i + 1].startsWith('--') ? true : argv[i + 1]); };
 // The sample folder must be set before lib/realization.js loads.
-if (arg('dir')) process.env.REALIZATION_SAMPLES_DIR = path.resolve(String(arg('dir')));
+const dirArg = arg('dir') || arg('samples-dir');
+if (dirArg) process.env.REALIZATION_SAMPLES_DIR = path.resolve(String(dirArg));
 
 const { flopSubset } = require('../lib/flops');
 const { COMBOS, className } = require('../lib/equity');
 const six = require('../engines/sixmax-preflop');
 const postflop = require('../lib/postflop');
 const RZ = require('../lib/realization');
+const { parseShard, shardSlice } = require('../lib/shard');
+
+const PRESET = (() => {
+  const name = arg('preset');
+  if (!name) return {};
+  const all = JSON.parse(fs.readFileSync(path.join(__dirname, 'presets.json'), 'utf8'))['sixmax-calibration'];
+  if (!all[name]) { console.error(`unknown preset ${name}; presets: ${Object.keys(all).join(', ')}`); process.exit(1); }
+  return all[name];
+})();
+// Flag value, else preset value, else default.
+const opt = (name, def) => arg(name, PRESET[name] !== undefined ? PRESET[name] : def);
 
 const SPOT_KEYS = ['stack', 'ante', 'open', 'sbOpen', 'threeBetIP', 'threeBetOOP', 'squeezeAdd', 'fourBet', 'coldCalls', 'sbLimp', 'maxPlayers', 'rIp', 'rOop'];
-const spot = {};
+const spot = { ...(PRESET.spot || {}) };
 for (const k of SPOT_KEYS) if (arg(k) !== undefined) spot[k] = arg(k);
+// --group on the command line replaces the preset's groups (and its --groups count).
+const groupArg = arg('group') || (arg('groups') === undefined ? PRESET.group : undefined);
 const OPT = {
-  groups: Number(arg('groups', 8)), group: arg('group') ? String(arg('group')).split(',').map((s) => s.trim()).filter(Boolean) : null,
-  terms: Number(arg('terms', 1)), flops: Number(arg('flops', 20)), rounds: Number(arg('rounds', 1)),
-  parallel: Number(arg('parallel', 1)), threads: Number(arg('threads', 4)), target: Number(arg('target', 1)),
-  maxSeconds: Number(arg('maxSeconds', 300)), maxExpl: Number(arg('maxExpl', 3)), budgetMin: Number(arg('budgetMin', 0)), iterations: Number(arg('iterations', 1000)),
-  start: String(arg('start', 'flat')), dry: !!arg('dry', false),
+  groups: Number(opt('groups', 8)), group: groupArg ? String(groupArg).split(',').map((s) => s.trim()).filter(Boolean) : null,
+  terms: Number(opt('terms', 1)), flops: Number(opt('flops', 20)), rounds: Number(opt('rounds', 1)),
+  parallel: Number(opt('parallel', 1)), threads: Number(opt('threads', 4)), target: Number(opt('target', 1)),
+  maxSeconds: Number(opt('maxSeconds', 300)), maxExpl: Number(opt('maxExpl', 3)), budgetMin: Number(opt('budgetMin', 0)), iterations: Number(opt('iterations', 1000)),
+  start: String(opt('start', 'flat')), dry: !!arg('dry', false),
+  plan: arg('plan') ? String(arg('plan')) : null, jobs: arg('jobs') ? String(arg('jobs')) : null, force: !!arg('force', false),
+  shard: parseShard(arg('shard')),
 };
+if (OPT.plan || OPT.jobs) OPT.rounds = 1;
 
 const P0 = six.normalizeParams(spot);
 const KEY = six.spotKey(P0);
@@ -92,7 +119,56 @@ async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: Math.max(1, n) }, async () => { while (next < items.length) { const i = next++; await fn(items[i], i); } }));
 }
 
+// Appends markdown to the GitHub job summary (if the env names one).
+function summaryOut(md) {
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
+}
+
+// Solves one job (terminal t on board) and saves the sample. Returns { saved, expl, ms, iterations }.
+async function solveJob(t, board, label) {
+  const { pot, stack, ranges, oop, ip } = t.flop;
+  const t0 = Date.now();
+  const st = await postflop.solveStats({ board, pot, stack, oop, ip, ranges, targetExploitability: OPT.target, maxSeconds: OPT.maxSeconds, threads: OPT.threads });
+  const ms = Date.now() - t0;
+  if (!(st.exploitabilityPctPot <= OPT.maxExpl)) { // not converged (time limit, busy machine): no sample
+    log(`${label}: ${t.group} ${board} expl ${(+st.exploitabilityPctPot).toFixed(2)}% > ${OPT.maxExpl}%: not saved`);
+    return { saved: false, expl: st.exploitabilityPctPot, ms, iterations: st.iterations };
+  }
+  const eq = st.rootEq ? null : { [oop]: RZ.flopEquities(board, ranges[oop], ranges[ip]), [ip]: RZ.flopEquities(board, ranges[ip], ranges[oop]) };
+  RZ.saveSample(KEY, RZ.makeSample({ terminalKey: t.key, board, pot, ranges, stats: st, oop, ip, eq, group: t.group }));
+  return { saved: true, expl: st.exploitabilityPctPot, ms, iterations: st.iterations };
+}
+
+// --jobs plan.json --shard i/n: solve this shard's jobs of the plan. No preflop solve.
+async function runShard() {
+  const plan = JSON.parse(fs.readFileSync(OPT.jobs, 'utf8'));
+  if (plan.spotKey !== KEY) throw new Error(`plan is for spot ${plan.spotKey}, the flags give ${KEY}`);
+  const jobs = shardSlice(plan.jobs, OPT.shard);
+  const tStart = Date.now(), rows = [];
+  const label = OPT.shard ? `shard ${OPT.shard.index}/${OPT.shard.count}` : 'jobs';
+  log(`${label}: ${jobs.length} of ${plan.jobs.length} jobs, samples in ${RZ.spotDir(KEY)}, ${OPT.threads} threads`);
+  let left = 0;
+  for (const [k, j] of jobs.entries()) {
+    if (OPT.budgetMin && Date.now() - tStart > OPT.budgetMin * 60e3) { left = jobs.length - k; break; }
+    const t = { key: j.key, ...plan.terminals[j.key] };
+    const r = await solveJob(t, j.board, label);
+    rows.push({ group: t.group, board: j.board, ...r });
+    log(`${label}: ${k + 1}/${jobs.length} ${t.group} ${j.board} expl ${(+r.expl).toFixed(2)}% (${(r.ms / 1000).toFixed(0)} s)${r.saved ? '' : ' not saved'}`);
+  }
+  const wallS = (Date.now() - tStart) / 1000;
+  if (left) log(`${label}: budget reached, ${left} jobs left for a later run`);
+  log(`${label}: ${rows.filter((r) => r.saved).length} samples saved in ${wallS.toFixed(0)} s`);
+  summaryOut([
+    `### 6-max calibration ${plan.spotKey} ${label}`,
+    '', `${rows.length} flops solved (${rows.filter((r) => r.saved).length} saved${left ? `, ${left} left by the time budget` : ''}) in ${wallS.toFixed(0)} s wall time (${(wallS / 60).toFixed(1)} min).`,
+    '', '| group | board | solve s | iterations | exploitability % pot | saved |', '| --- | --- | ---: | ---: | ---: | --- |',
+    ...rows.map((r) => `| ${r.group} | ${r.board} | ${(r.ms / 1000).toFixed(1)} | ${r.iterations} | ${(+r.expl).toFixed(3)} | ${r.saved ? 'yes' : 'no'} |`),
+    rows.length ? `| mean | | ${(rows.reduce((a, r) => a + r.ms, 0) / rows.length / 1000).toFixed(1)} | | | |` : '', '',
+  ].join('\n'));
+}
+
 (async () => {
+  if (OPT.jobs) { await runShard(); process.exit(0); }
   const flops = spread(flopSubset(OPT.flops));
   const tStart = Date.now();
   log(`spot ${JSON.stringify(spot)} key ${KEY}; samples in ${RZ.spotDir(KEY)}; ${flops.length} flops, ${OPT.rounds} round(s), ` +
@@ -121,31 +197,44 @@ async function pool(items, n, fn) {
     }
     if (OPT.dry) break;
 
-    const jobs = [];
+    let jobs = [];
     for (const board of flops) for (const t of chosen) {
-      const old = RZ.readSample(KEY, t.key, board);
+      const old = OPT.force ? null : RZ.readSample(KEY, t.key, board);
       const good = old && !(old.solver && old.solver.exploitabilityPctPot > OPT.maxExpl);
       if (good && old.rangesHash === RZ.rangesHash(t.flop.ranges)) continue; // already sampled with these ranges
       jobs.push({ t, board });
+    }
+    if (OPT.plan || OPT.shard) {
+      // Group-major order (terminal by terminal, boards in spread order): round robin over shards then gives each
+      // shard about the same mix of groups (SRP solves take much longer than 3-bet and 4-bet pots).
+      const order = new Map(chosen.map((t, i) => [t.key, i]));
+      jobs.sort((a, b) => order.get(a.t.key) - order.get(b.t.key) || flops.indexOf(a.board) - flops.indexOf(b.board));
+    }
+    if (OPT.shard && !OPT.plan) {
+      // A shard without a plan file: this machine's part of the missing jobs. Each shard sees the same samples
+      // folder state at the start, else the lists differ; the plan file (--plan, then --jobs) avoids that.
+      jobs = shardSlice(jobs, OPT.shard);
+      log(`shard ${OPT.shard.index}/${OPT.shard.count}: ${jobs.length} jobs`);
+    }
+    if (OPT.plan) {
+      const terminals = Object.fromEntries(chosen.map((t) => [t.key, { group: t.group, name: t.name, mass: t.mass, flop: t.flop }]));
+      const plan = { job: 'sixmax-calibration', spot, spotKey: KEY, flops, groups: picked.map((g) => g.group), count: jobs.length,
+        done: chosen.length * flops.length - jobs.length, terminals, jobs: jobs.map(({ t, board }) => ({ key: t.key, board })) };
+      fs.writeFileSync(OPT.plan, JSON.stringify(plan));
+      log(`plan: ${jobs.length} jobs to solve, ${plan.done} samples already current; written to ${OPT.plan}`);
+      process.exit(0);
     }
     log(`round ${round}: ${jobs.length} solves to run (${chosen.length * flops.length - jobs.length} samples already current)`);
     let done = 0, skipped = 0, failed = 0;
     const t0 = Date.now();
     await pool(jobs, OPT.parallel, async ({ t, board }) => {
       if (OPT.budgetMin && Date.now() - tStart > OPT.budgetMin * 60e3) { skipped++; return; }
-      const { pot, stack, ranges, oop, ip } = t.flop;
-      const st = await postflop.solveStats({ board, pot, stack, oop, ip, ranges, targetExploitability: OPT.target, maxSeconds: OPT.maxSeconds, threads: OPT.threads });
-      if (!(st.exploitabilityPctPot <= OPT.maxExpl)) { // not converged (time limit, busy machine): no sample
-        failed++;
-        log(`round ${round}: ${t.group} ${board} expl ${(+st.exploitabilityPctPot).toFixed(2)}% > ${OPT.maxExpl}%: not saved`);
-        return;
-      }
-      const eq = st.rootEq ? null : { [oop]: RZ.flopEquities(board, ranges[oop], ranges[ip]), [ip]: RZ.flopEquities(board, ranges[ip], ranges[oop]) };
-      RZ.saveSample(KEY, RZ.makeSample({ terminalKey: t.key, board, pot, ranges, stats: st, oop, ip, eq, group: t.group }));
+      const r = await solveJob(t, board, `round ${round}`);
+      if (!r.saved) { failed++; return; }
       done++;
       const el = (Date.now() - t0) / 1000;
-      log(`round ${round}: ${done}/${jobs.length} ${t.group} ${board} expl ${(+st.exploitabilityPctPot).toFixed(2)}% ` +
-        `(${((st.solveMs || st.ms || 0) / 1000).toFixed(0)} s) | elapsed ${(el / 60).toFixed(1)} min, left ~${((el / done) * (jobs.length - done) / 60).toFixed(0)} min`);
+      log(`round ${round}: ${done}/${jobs.length} ${t.group} ${board} expl ${(+r.expl).toFixed(2)}% ` +
+        `(${(r.ms / 1000).toFixed(0)} s) | elapsed ${(el / 60).toFixed(1)} min, left ~${((el / done) * (jobs.length - done) / 60).toFixed(0)} min`);
     });
     if (skipped) log(`round ${round}: budget reached, ${skipped} solves left for a later run`);
     if (failed) log(`round ${round}: ${failed} solves above ${OPT.maxExpl}% pot, not saved`);
@@ -161,7 +250,7 @@ async function pool(items, n, fn) {
     log(`round ${round}: table ${table ? table.version + ' (' + table.info + ')' : 'none'}`);
     if (skipped) { stopped = true; break; }
   }
-  if (!OPT.dry && !stopped) summary(await six.solve({ ...spot, iterations: OPT.iterations }, () => {}), 'final preflop (calibrated)');
+  if (!OPT.dry && !stopped && !OPT.shard) summary(await six.solve({ ...spot, iterations: OPT.iterations }, () => {}), 'final preflop (calibrated)');
   log(`done in ${((Date.now() - tStart) / 60e3).toFixed(1)} min`);
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
