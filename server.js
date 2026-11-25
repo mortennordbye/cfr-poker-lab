@@ -112,7 +112,7 @@ loadEquity().then(({ E, W }) => {
       fs.createReadStream(file).pipe(res);
     } catch (err) {
       console.error(err);
-      json(res, 500, { error: String(err.message || err) });
+      json(res, 500, { error: 'internal error (see the server log)' });
     }
   }).listen(PORT, HOST, () => console.log(`Solver running at http://localhost:${PORT}` + (HOST !== '127.0.0.1' ? ` (listening on ${HOST})` : '')));
 });

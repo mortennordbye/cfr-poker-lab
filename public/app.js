@@ -767,7 +767,7 @@
     box.innerHTML = html;
     box.querySelectorAll('.grid.mini .cell').forEach((cell) => (cell.onmouseenter = () => {
       const name = cell.dataset.name, nc = nCombosOn(name, n.board);
-      $('#rangeInfo').innerHTML = `<b>${name}</b> ` + sides.map(([pos], i) => {
+      $('#rangeInfo').innerHTML = `<b>${esc(name)}</b> ` + sides.map(([pos], i) => {
         const d = cellsBy[i][name], w = d ? d.w : 0;
         return `&middot; ${esc(pos)} <b>${w.toFixed(2)}</b> / ${nc} combos (${pct(nc ? w / nc : 0, 0)})`;
       }).join(' ');
@@ -986,7 +986,7 @@
       html += '<div class="fsec"><div class="fh">Plays action (more than 0.5%)</div>' + n.actions.map((a, k) => chip('act:' + a.label, `<span class="dot" style="background:${colors[k]}"></span>${esc(a.label)}`)).join('') + '</div>';
     }
     // Chips that are on but have no button at this node (an action of another node, a hand class preflop).
-    const shown = new Set([...html.matchAll(/data-f="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')));
+    const shown = new Set([...html.matchAll(/data-f="([^"]*)"/g)].map((m) => m[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')));
     const rest = [...S.filters].filter((f) => !shown.has(f));
     if (rest.length) html += '<div class="fsec"><div class="fh">On, not used at this node</div>' + rest.map((f) => chip(f, esc(f.replace(':', ': ')), ' idle')).join('') + '</div>';
     html += `<div class="fsec"><button class="ghost" id="fclear" ${S.filters.size ? '' : 'disabled'}>Clear filters</button></div>`;
