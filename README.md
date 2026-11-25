@@ -16,6 +16,8 @@ This project solves No-Limit Hold'em spots on your own computer with Counterfact
 and lets you click through the solved game tree: preflop, flop, turn and river.
 It started as an experiment to learn how poker solvers work.
 
+**[Try it in the browser](https://mortennordbye.github.io/cfr-poker-lab/)**: no install, but slower (see [Browser mode](#browser-mode)).
+
 <img src="docs/screenshots/sixmax-preflop.png" alt="6-max preflop node: BB facing an open and a 3-bet" width="800" />
 
 </div>
@@ -77,6 +79,18 @@ The container is limited to 6 GB of RAM; one open flop solve uses about 1.6 GB.
 Without Docker, `node server.js` also works. The `postflop` engine then builds its Rust binary with
 `cargo build --release` on first use; `SKIP_ENGINES=postflop node server.js` uses the JavaScript engine instead.
 
+### Browser mode
+
+The same UI also runs as a static site on GitHub Pages: <https://mortennordbye.github.io/cfr-poker-lab/>.
+The solves run on your computer, inside the page, with the JavaScript engines in Web Workers. A banner in the page says so.
+
+- **Slower**: the JavaScript engine needs about 2 minutes for a raised-pot flop and 6 minutes for a limped-pot flop
+  (seconds with the Rust engine), and large trees can run out of memory. Preflop solves take about as long as locally.
+- **Not available**: the Rust `postflop` engine (flop, turn and river use `postflop-js`) and "Fill calibration when idle".
+- Solve caches and calibration samples stay in the browser (IndexedDB).
+
+Build the site locally with `node tools/build-web.js` (writes `dist/`).
+
 Fill the calibration samples for one heads-up spot in one batch run (takes hours):
 
 ```sh
@@ -101,8 +115,8 @@ cfr-poker-lab/
 │   ├── postflop-js/     # JavaScript postflop engine (fallback, test reference)
 │   └── pushfold/        # heads-up push/fold
 ├── lib/                 # hand evaluator, equity table, flop subset, realization samples
-├── public/              # browser UI
-├── tools/               # batch calibration
+├── public/              # browser UI (browser/ = in-page API and adapters for the static site)
+├── tools/               # batch calibration, static site build (build-web.js)
 ├── Dockerfile           # two stages: Rust build, then Node runtime
 ├── docker-compose.yml   # loopback port, cache volume, resource limits
 ├── justfile             # up, down, logs, test, dev
@@ -120,6 +134,7 @@ cfr-poker-lab/
 | Container Scan | push, weekly | Trivy image scan, results in the Security tab |
 | Dependency Review | PR | block known-vulnerable dependency changes |
 | Scorecard | push, weekly | OpenSSF supply-chain grade |
+| Pages | push to `main` | build the static site (browser mode) and deploy it to GitHub Pages |
 
 ---
 
