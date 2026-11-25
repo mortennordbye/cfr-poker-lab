@@ -15,6 +15,8 @@ Guidance for coding agents (Claude Code and others) working in this repository.
 | Test 6-max preflop | `node engines/sixmax-preflop/test.js` |
 | Test JS postflop | `node engines/postflop-js/test.js` |
 | Test Rust postflop | `node engines/postflop/test.js` |
+| Test shards and merge of precomputed data | `node tools/merge-data.test.js` |
+| Download precomputed data into `cache/` | `just data` (`node tools/fetch-data.js`; never overwrites a file) |
 | Build the Rust engine as WebAssembly | `tools/build-wasm.sh` (pinned nightly for threads + stable for one thread; writes `engines/postflop/rs/target/web/`) |
 | Build the static site (browser mode) | `node tools/build-web.js` (writes `dist/`; run `tools/build-wasm.sh` first for the Rust engine) |
 

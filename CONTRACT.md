@@ -177,7 +177,8 @@ process, with kind `postflop` if loaded, else `postflop-js`. Any other API reque
 ## Flop reports
 
 A flop report solves one heads-up flop spot on many flops and aggregates the root results (`lib/reports.js`, CLI
-`tools/flop-report.js`). Local mode only: the static site answers 404 for these paths.
+`tools/flop-report.js`). Runs in local mode only. The static site answers `GET /api/reports` and `GET /api/report/:id`
+read-only from the precomputed data (see "Precomputed data"); `POST /api/report` answers 404 there.
 
 Input (`POST /api/report` body):
 
@@ -231,3 +232,42 @@ Report:
   }],
 }
 ```
+
+A batch run can stop with flops left (`--shard`, `--limit`, `--budgetMin` of `tools/flop-report.js`): the file then
+has `status: 'partial'`, which the API shows as `stopped`. `POST /api/report` with the same input continues it.
+
+## Precomputed data
+
+Batch solves run on GitHub runners (`.github/workflows/precompute.yml`, manual start; a pull request that changes the
+pipeline runs a smoke test without publishing). The results are in the release with tag `data`, which each run
+replaces:
+
+- `cfr-data.tar.gz`: the layout of `cache/`: `reports/<id>.json` (same format and id as a local run of the same
+  input) and `realization-samples/<spotKey>/<terminal hash>/<board>.json` (same files as a local solve writes).
+- `manifest.json`:
+
+```js
+{
+  version: 1, createdAt, gitSha,
+  reports: [{ id, name, status: 'done' | 'partial', done, total, flops /* = total */, progress, createdAt, updatedAt,
+              runMs /* sum of the flop solve times */, input }],
+  samples: [{ spotKey, group /* 6-max group, or the heads-up terminal key */, kind: 'sixmax-preflop' | 'hu-preflop', count }],
+  totals: { reports, reportsDone, samples },
+}
+```
+
+Pipeline: **plan** (`tools/precompute-plan.js`: downloads the data, runs the tool's `--plan` mode, which solves no
+flop, and gives each task min(missing work, shards) shards; nothing missing = no shards) → **build** (native Rust
+engine, once) → **shard** (one runner each, `--shard i/n` = items i-1, i-1+n, ... of the missing flops or jobs,
+`lib/shard.js`; each flop is saved when done, `--budgetMin` stops before the 350-minute job limit) → **merge**
+(`tools/merge-data.js`: old data + shard outputs) → **publish** (merges once more with the newest data, then replaces
+the release assets and starts the Pages build).
+
+- Spots come from `tools/presets.json` (`--preset`). The spot of a report is solved without samples (flat
+  realization), so each run of the same input gets the same spot. 6-max jobs take their terminals and ranges from
+  the flat preflop solve (`tools/calibrate-sixmax.js` round 1).
+- Merge rules: the files of a report id with the newest `createdAt` are joined (a `force` run makes a new one,
+  which replaces the old results); a sample path that two inputs have keeps the newer sample (`createdAt`).
+- `tools/fetch-data.js` (`just data`, `just data-docker`) unpacks the data into `cache/` and never overwrites a file
+  that exists. The Pages build puts `reports/` and `manifest.json` in `dist/data/`; the static site reads them
+  (`public/browser/local-api.js`).

@@ -122,6 +122,25 @@ Measured on an M-series Mac, 4 threads on the efficiency cores at low priority, 
 flop: the 25-flop report of the heads-up 100bb raised pot took 130 min of solve time (median 311 s per flop, 228 to
 450 s). Most flops stopped at the time limit: median exploitability 1.4% pot, 8 of 25 flops at about 1%, worst 8.2%.
 
+### Precomputed data
+
+Big batch runs (flop reports, 6-max calibration samples) run on GitHub runners, not on your computer. The
+**Precompute** workflow (Actions tab, "Run workflow") splits the missing work over up to 20 runners, joins the
+results and stores them in the release `data` (`cfr-data.tar.gz` + `manifest.json`). A run only solves what the
+data does not have yet; `force` solves everything again.
+
+| Command | What it does |
+| ------- | ------------ |
+| `just data` | download the data into `cache/` (files that exist stay as they are) |
+| `just data-docker` | the same into the `cfr_cache` volume of the container |
+
+The live page shows the precomputed flop reports read-only. Spots: `tools/presets.json`.
+Details: [CONTRACT.md](CONTRACT.md#precomputed-data).
+
+```sh
+gh workflow run precompute.yml -f job=flop-report -f preset=hu-100bb-srp -f flops=95
+```
+
 ---
 
 ## Repository structure
@@ -157,7 +176,8 @@ cfr-poker-lab/
 | Container Scan | push, weekly | Trivy image scan, results in the Security tab |
 | Dependency Review | PR | block known-vulnerable dependency changes |
 | Scorecard | push, weekly | OpenSSF supply-chain grade |
-| Pages | push to `main` | build the WebAssembly engine and the static site (browser mode), deploy it to GitHub Pages |
+| Pages | push to `main`, after Precompute | build the WebAssembly engine and the static site (browser mode) with the precomputed reports, deploy it to GitHub Pages |
+| Precompute | manual; PR that changes it (smoke test) | batch solves on up to 20 runners, results in the release `data` |
 
 ---
 
