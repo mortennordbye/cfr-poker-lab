@@ -7,6 +7,7 @@ const { loadEquity } = require('./lib/equity');
 const pushfold = require('./engines/pushfold/solver');
 const { createSolves } = require('./lib/solves');
 const { createIdleFiller } = require('./idle');
+const { createReports } = require('./lib/reports');
 
 const PORT = Number(process.env.PORT) || 8787;
 // 127.0.0.1 by default: the app has no login. The container sets 0.0.0.0 and publishes the port on loopback only.
@@ -30,7 +31,7 @@ for (const dir of fs.readdirSync(path.join(__dirname, 'engines'))) {
 
 const idle = createIdleFiller({
   engines,
-  isBusy: () => solves.isBusy(),
+  isBusy: () => solves.isBusy() || reports.isBusy(),
   idleMs: Number(process.env.IDLE_MS) || 5 * 60e3,
   solveParams: process.env.IDLE_SOLVE_PARAMS ? JSON.parse(process.env.IDLE_SOLVE_PARAMS) : {}, // test override
   kind: process.env.IDLE_KIND || null, // test override; default 'postflop' if loaded, else 'postflop-js'
@@ -42,6 +43,8 @@ const solves = createSolves({
   onStart: (kind, params) => { if (kind === 'hu-preflop') idle.noteHuSpot(params); },
   rel: (file) => path.relative(__dirname, file),
 });
+// Flop reports (lib/reports.js): one postflop solve at a time, files in cache/reports/ (REPORTS_DIR).
+const reports = createReports({ engines });
 
 function json(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -86,6 +89,14 @@ loadEquity().then(({ E, W }) => {
         const r = await solves.node(m[1], url.searchParams.get('id'));
         return json(res, r.status, r.node || { error: r.error });
       }
+      // Flop reports: POST /api/report starts or continues one, GET /api/report/:id, GET /api/reports. See CONTRACT.md.
+      if (p === '/api/report' && req.method === 'POST') {
+        try { return json(res, 200, reports.start(await readBody(req))); }
+        catch (e) { if (e.status === 400) return json(res, 400, { error: e.message }); throw e; }
+      }
+      if (p === '/api/reports') return json(res, 200, reports.list());
+      m = p.match(/^\/api\/report\/([\w-]+)$/);
+      if (m) { const r = reports.status(m[1]); return r ? json(res, 200, r) : json(res, 404, { error: 'no such report' }); }
       if (p === '/api/pushfold') {
         const q = url.searchParams;
         return json(res, 200, pushfold.solve(E, W, {
