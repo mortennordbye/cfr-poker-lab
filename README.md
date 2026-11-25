@@ -50,22 +50,32 @@ All engines follow one node format and API, described in [CONTRACT.md](CONTRACT.
 
 ## Getting Started
 
-Requirements: Node.js 26 (no npm packages) and a stable Rust toolchain for the `postflop` engine.
+Requirements: [Docker](https://docs.docker.com/get-docker/) and [just](https://github.com/casey/just).
+The image contains the Node.js app and the prebuilt Rust engine, so you do not need Node or Rust on your computer.
 
 1. **Clone**: `git clone https://github.com/mortennordbye/cfr-poker-lab.git && cd cfr-poker-lab`
-2. **Run**: `node server.js`, then open <http://localhost:8787>
-3. **First flop solve**: the `postflop` engine builds its Rust binary with `cargo build --release` on first use
-   (needs network access once). Without Rust, start with `SKIP_ENGINES=postflop node server.js` to use the
-   JavaScript engine instead.
+2. **Run**: `just up` (builds the image), or `just pull` (uses the published image), then open <http://localhost:8787>
+3. **Stop**: `just down`. Solves and calibration samples stay in the `cfr_cache` volume.
 
-Tests (each prints its checks and exits non-zero on failure):
+Without cloning, run the published image directly (amd64 and arm64):
 
 ```sh
-node engines/hu-preflop/test.js
-node engines/sixmax-preflop/test.js
-node engines/postflop-js/test.js
-node engines/postflop/test.js      # needs Rust
+docker run -d --name cfr-poker-lab -p 127.0.0.1:8787:8787 -v cfr_cache:/app/cache ghcr.io/mortennordbye/cfr-poker-lab:latest
 ```
+
+| Command | What it does |
+| ------- | ------------ |
+| `just up` | build the image and start the app |
+| `just pull` | start with the image from ghcr.io |
+| `just down` / `just restart` / `just logs` | stop, restart, follow the logs |
+| `just test` | run every engine test suite inside the image |
+| `just dev` | run without Docker (needs Node.js 26, and Rust for the `postflop` engine) |
+
+The port is bound to `127.0.0.1` only: the app has no login, so do not expose it to a network.
+The container is limited to 6 GB of RAM; one open flop solve uses about 1.6 GB.
+
+Without Docker, `node server.js` also works. The `postflop` engine then builds its Rust binary with
+`cargo build --release` on first use; `SKIP_ENGINES=postflop node server.js` uses the JavaScript engine instead.
 
 Fill the calibration samples for one heads-up spot in one batch run (takes hours):
 
@@ -93,6 +103,9 @@ cfr-poker-lab/
 ├── lib/                 # hand evaluator, equity table, flop subset, realization samples
 ├── public/              # browser UI
 ├── tools/               # batch calibration
+├── Dockerfile           # two stages: Rust build, then Node runtime
+├── docker-compose.yml   # loopback port, cache volume, resource limits
+├── justfile             # up, down, logs, test, dev
 ├── docs/screenshots/
 └── .github/workflows/   # CI and security pipelines
 ```
@@ -103,7 +116,8 @@ cfr-poker-lab/
 
 | Workflow | Trigger | Purpose |
 | -------- | ------- | ------- |
-| CI | push, PR | engine test suites (Node) and the Rust build + postflop tests |
+| CI | push, PR | engine test suites (Node), Rust build + postflop tests, then a multi-arch image build; on `main` the image is published to `ghcr.io/mortennordbye/cfr-poker-lab` |
+| Container Scan | push, weekly | Trivy image scan, results in the Security tab |
 | Dependency Review | PR | block known-vulnerable dependency changes |
 | Scorecard | push, weekly | OpenSSF supply-chain grade |
 

@@ -6,7 +6,9 @@ Guidance for coding agents (Claude Code and others) working in this repository.
 
 | Task | Command |
 | ---- | ------- |
-| Run | `node server.js` (port 8787; `PORT=<n>` for another port) |
+| Run in Docker | `just up` (stop: `just down`) |
+| Test in Docker | `just test` |
+| Run without Docker | `node server.js` (port 8787; `PORT=<n>` for another port) |
 | Run without the Rust engine | `SKIP_ENGINES=postflop node server.js` |
 | Build Rust engine | `cargo build --release --manifest-path engines/postflop/rs/Cargo.toml` |
 | Test heads-up preflop | `node engines/hu-preflop/test.js` |

@@ -1,0 +1,14 @@
+.git
+.github
+cache
+shots
+docs
+assets
+**/target
+node_modules
+*.md
+!CONTRACT.md
+docker-compose.yml
+Dockerfile
+justfile
+.DS_Store

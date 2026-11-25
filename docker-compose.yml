@@ -1,0 +1,24 @@
+services:
+  cfr-poker-lab:
+    build: .
+    image: ghcr.io/mortennordbye/cfr-poker-lab:latest
+    container_name: cfr-poker-lab
+    ports:
+      # Loopback only: the app has no login, so it must not be reachable from the LAN.
+      - "127.0.0.1:${CFR_PORT:-8787}:8787"
+    volumes:
+      # Solve caches and calibration samples survive restarts and image updates.
+      - cfr_cache:/app/cache
+    environment:
+      # A finished flop solve keeps ~1.6 GB in memory; keep 3 so they fit under mem_limit.
+      MAX_SOLVES: 3
+    # Reaps the solver child processes.
+    init: true
+    restart: unless-stopped
+    # Ceilings so a large flop solve cannot starve the host (docker compose honours
+    # these keys outside swarm mode). Raise mem_limit if your Docker VM has more RAM.
+    mem_limit: 6g
+    cpus: 6
+
+volumes:
+  cfr_cache:
