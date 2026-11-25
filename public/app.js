@@ -793,9 +793,9 @@
       if (!combos.length) continue;
       let eq = null;
       if (showEq) { let a = 0, b = 0; for (const cb of d.combos) { const e = comboEq(cb.name); if (e !== null) { a += cb.weight * e; b += cb.weight; } } eq = b > 0 ? a / b : null; }
-      rows.push({ name, d, eq, combos });
+      rows.push({ name, d, eq, combos, live: nCombosOn(name, n.board) });
     }
-    const key = (r, col) => (col === 'hand' ? -handOrder(r.name) : col === 'combos' ? r.d.w : col === 'weight' ? r.d.w / r.d.n : col === 'ev' ? (r.d.handEv === null ? -1e9 : r.d.handEv) : col === 'eq' ? (r.eq === null ? -1 : r.eq) : r.d.s[+col.slice(1)]);
+    const key = (r, col) => (col === 'hand' ? -handOrder(r.name) : col === 'combos' ? r.d.w : col === 'weight' ? r.d.w / r.live : col === 'ev' ? (r.d.handEv === null ? -1e9 : r.d.handEv) : col === 'eq' ? (r.eq === null ? -1 : r.eq) : r.d.s[+col.slice(1)]);
     const { col, dir } = S.tableSort;
     rows.sort((a, b) => dir * (key(a, col) - key(b, col)) || handOrder(a.name) - handOrder(b.name));
     const th = (c, label, cls = '') => `<th data-col="${c}" class="${cls}${col === c ? ' sorted' : ''}">${label}${col === c ? (dir < 0 ? ' &#9662;' : ' &#9652;') : ''}</th>`;
@@ -805,7 +805,7 @@
     const fmtEq = (e) => (e === null ? (eqRes && eqRes.status === 'running' ? '&hellip;' : '-') : pct(e));
     for (const r of rows) {
       const open = n.handKind === 'combo' && S.tableOpen.has(r.name);
-      html += `<tr class="hrow" data-name="${r.name}"><td class="l">${n.handKind === 'combo' ? `<span class="tw">${open ? '&#9662;' : '&#9656;'}</span>` : ''}${r.name}</td><td>${r.d.w.toFixed(2)}</td><td>${pct(r.d.w / r.d.n)}</td>`;
+      html += `<tr class="hrow" data-name="${r.name}"><td class="l">${n.handKind === 'combo' ? `<span class="tw">${open ? '&#9662;' : '&#9656;'}</span>` : ''}${r.name}</td><td>${r.d.w.toFixed(2)}</td><td>${pct(r.d.w / r.live)}</td>`;
       r.d.s.forEach((f) => (html += `<td>${pct(f)}</td>`));
       html += `<td>${r.d.handEv === null ? '-' : fmtEv(r.d.handEv)}</td>${showEq ? `<td>${fmtEq(r.eq)}</td>` : ''}</tr>`;
       if (open) {
@@ -848,7 +848,7 @@
     const cells = sides.map(([, r]) => rangeCells(r.w));
     const names = [...new Set(cells.flatMap((c) => Object.keys(c)))].filter((nm) => cellPasses(nm, null)).sort((a, b) => handOrder(a) - handOrder(b));
     let html = `<table class="htable"><thead><tr><th class="l">Hand</th>${sides.map(([p]) => `<th>${esc(p)} combos</th><th>${esc(p)} weight</th>`).join('')}</tr></thead><tbody>`;
-    for (const nm of names) html += `<tr><td class="l">${nm}</td>${cells.map((c) => { const d = c[nm]; return d ? `<td>${d.w.toFixed(2)}</td><td>${pct(d.w / d.n)}</td>` : '<td>-</td><td>-</td>'; }).join('')}</tr>`;
+    for (const nm of names) html += `<tr><td class="l">${nm}</td>${cells.map((c) => { const d = c[nm]; return d ? `<td>${d.w.toFixed(2)}</td><td>${pct(d.w / nCombosOn(nm, n.board))}</td>` : '<td>-</td><td>-</td>'; }).join('')}</tr>`;
     box.innerHTML = `<div class="tscroll">${html}</tbody></table></div><div class="note">No player to act at this node: the table lists the ranges that reach it.</div>`;
   }
 
