@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Poker Solver</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand"><span class="logo">&#9824;</span> Solver</div>
+  <button id="setupToggle" class="ghost">Spot setup &#9662;</button>
+  <div id="spotline" class="spotline"></div>
+  <div id="progress" class="progress hidden"><div class="fill"></div><span class="msg"></span></div>
+  <div class="spacer"></div>
+  <a href="/pushfold.html" class="link">Push/fold</a>
+</header>
+<!-- Spot setup: engine + its params. Later: game type, players, presets (backlog). -->
+<section id="setup" class="setup hidden">
+  <label class="fld"><span>Engine</span><select id="engine"></select></label>
+  <form id="params" class="params" autocomplete="off"></form>
+  <button id="solveBtn" class="primary">Solve</button>
+  <label class="fld chk" id="idleFld" title="When the UI is idle and no solve runs, solve one more calibration flop for the last heads-up spot. Any click stops it."><input type="checkbox" id="idleChk"><span id="idleLbl">Fill calibration when idle (5 min)</span></label>
+</section>
+<nav id="actionbar" class="actionbar"></nav>
+<main id="main">
+  <section id="left">
+    <!-- View tabs over the grid. Disabled ones are backlog. -->
+    <div class="viewtabs" id="viewtabs">
+      <button data-view="strategy" class="on">Strategy + EV</button>
+      <button data-view="ev">EV</button>
+      <button data-view="ranges" disabled title="Not built yet">Ranges</button>
+      <button data-view="breakdown" disabled title="Not built yet">Breakdown</button>
+      <button data-view="equity" disabled title="Not built yet">Equity chart</button>
+      <button data-view="table" disabled title="Not built yet">Table</button>
+      <div class="spacer"></div>
+      <div id="gridHead" class="gridhead"></div>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="picker" class="picker hidden"></div>
+  </section>
+  <aside id="right">
+    <div id="potline" class="potline"></div>
+    <div id="summary" class="summary"></div>
+    <div id="stackbar" class="stackbar"></div>
+    <div class="tabs" id="tabs">
+      <button data-tab="hands" class="on">Hands</button>
+      <button data-tab="stats">Solve</button>
+      <button data-tab="summary" disabled title="Not built yet">Summary</button>
+      <button data-tab="filters" disabled title="Not built yet">Filters</button>
+      <button data-tab="blockers" disabled title="Not built yet">Blockers</button>
+    </div>
+    <div id="tab-hands" class="tab"></div>
+    <div id="tab-stats" class="tab hidden"></div>
+    <div id="extra"></div>
+  </aside>
+</main>
+<div id="empty" class="empty hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

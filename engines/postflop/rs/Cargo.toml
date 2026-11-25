@@ -1,0 +1,23 @@
+[package]
+name = "postflop-engine"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "postflop-engine"
+path = "src/main.rs"
+
+[dependencies]
+# b-inary/postflop-solver (AGPL-3.0-or-later), pinned commit. Stable Rust: no custom-alloc, no bincode/zstd.
+postflop-solver = { git = "https://github.com/b-inary/postflop-solver", rev = "9d1509fe5077d019825f833eed04b16d342dfda1", default-features = false, features = ["rayon"] }
+rayon = "1.8"
+serde_json = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
