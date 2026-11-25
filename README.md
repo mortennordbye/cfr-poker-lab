@@ -118,8 +118,9 @@ node tools/flop-report.js --terminal 'SB:Raise 2.5/BB:Call' --flops 25
 ```
 
 API: `POST /api/report`, `GET /api/report/:id`, `GET /api/reports` (see [CONTRACT.md](CONTRACT.md#flop-reports)).
-Measured on an M-series Mac (8 threads, target 1% pot): the 25-flop report of the heads-up 100bb raised pot
-took 33 min of solve time (median 40 s per flop, 16 s to 8 min; the slow flops ran while other batch jobs used the CPU).
+Measured on an M-series Mac, 4 threads on the efficiency cores at low priority, target 1% pot, 300 s limit per
+flop: the 25-flop report of the heads-up 100bb raised pot took 130 min of solve time (median 311 s per flop, 228 to
+450 s). Most flops stopped at the time limit: median exploitability 1.4% pot, 8 of 25 flops at about 1%, worst 8.2%.
 
 ---
 
