@@ -193,6 +193,11 @@ vite.config.ts.timestamp-*
 .nx/migrate-runs
 
 
+# --- Claude Code ---
+# Agent worktrees and personal settings (.claude/settings.json is shared and tracked)
+.claude/worktrees/
+.claude/settings.local.json
+
 # --- OS / editors ---
 .DS_Store
 .idea/
