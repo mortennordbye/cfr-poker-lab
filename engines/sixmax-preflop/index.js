@@ -1,10 +1,9 @@
 'use strict';
 // Engine 'sixmax-preflop': 6-max preflop (UTG..BB), ChipEV, CFR+ over 169 hand classes.
 // See README.md and CONTRACT.md.
-const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { Worker } = require('worker_threads');
+const { sha1, toBase64, fromBase64, files } = require('../../lib/platform');
 const { className } = require('../../lib/equity');
 const { POS, normalizeParams, buildTree } = require('./tree');
 
@@ -39,19 +38,12 @@ function runWorker(P, threads, onProgress) {
     let done = false;
     w.on('message', (m) => {
       if (m.error) { done = true; reject(new Error(m.error)); }
-      else if (m.result) { done = true; resolve(m.result); }
+      else if (m.result) { done = true; resolve(m.result); w.terminate(); } // a browser worker does not stop by itself
       else if (m.progress !== undefined) onProgress(m.progress, m.message);
     });
     w.on('error', (e) => { done = true; reject(e); });
     w.on('exit', (code) => { if (!done) reject(new Error('worker exit ' + code)); });
   });
-}
-
-const b64 = (ta) => Buffer.from(ta.buffer, ta.byteOffset, ta.byteLength).toString('base64');
-function fromB64(s, Type) {
-  const buf = Buffer.from(s, 'base64');
-  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-  return new Type(ab);
 }
 
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -122,14 +114,14 @@ function wrap(P, tree, offs, data, stats) {
 async function solve(raw = {}, onProgress = () => {}, opts = {}) {
   const P = normalizeParams(raw);
   const solveKey = { ...P }; delete solveKey.maxSeconds;
-  const hash = crypto.createHash('sha1').update(JSON.stringify({ v: VERSION, P: solveKey })).digest('hex').slice(0, 16);
+  const hash = sha1(JSON.stringify({ v: VERSION, P: solveKey })).slice(0, 16);
   const file = path.join(CACHE, `sixmax-preflop-${hash}.json`);
   const tree = buildTree(P);
-  if (!opts.noCache && fs.existsSync(file)) {
+  if (!opts.noCache && files.exists(file)) {
     try {
-      const d = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+      const d = JSON.parse(await files.readTextAsync(file));
       onProgress(1, 'loaded from cache');
-      return wrap(P, tree, fromB64(d.offs, Int32Array), fromB64(d.data, Float32Array), { ...d.stats, cached: true });
+      return wrap(P, tree, fromBase64(d.offs, Int32Array), fromBase64(d.data, Float32Array), { ...d.stats, cached: true });
     } catch (e) { /* solve again */ }
   }
   const prev = chain;
@@ -140,8 +132,7 @@ async function solve(raw = {}, onProgress = () => {}, opts = {}) {
   try {
     const res = await runWorker(P, opts.threads || 4, onProgress);
     if (!opts.noCache) {
-      await fs.promises.mkdir(CACHE, { recursive: true });
-      await fs.promises.writeFile(file, JSON.stringify({ v: VERSION, params: P, stats: res.stats, offs: b64(res.offs), data: b64(res.data) }));
+      await files.writeTextAsync(file, JSON.stringify({ v: VERSION, params: P, stats: res.stats, offs: toBase64(res.offs), data: toBase64(res.data) }));
     }
     onProgress(1, 'done');
     return wrap(P, tree, res.offs, res.data, res.stats);

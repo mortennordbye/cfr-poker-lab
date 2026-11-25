@@ -1,8 +1,8 @@
 'use strict';
 // Heads-up postflop solver (kind 'postflop'). Discounted CFR over individual combos. See README.md.
 const path = require('path');
-const crypto = require('crypto');
 const { Worker } = require('worker_threads');
+const { sha1 } = require('../../lib/platform');
 const G = require('./game');
 
 // Heads-up single-raised pot (SB opens 3bb, BB calls). In HU the SB is the button: IP postflop.
@@ -89,7 +89,7 @@ function normalizeParams(q = {}) {
 
 function hashParams(P) {
   const { maxSeconds, threads, ...rest } = P;
-  return crypto.createHash('sha1').update(JSON.stringify(rest)).digest('hex').slice(0, 16);
+  return sha1(JSON.stringify(rest)).slice(0, 16);
 }
 
 // In-memory cache of finished solves (same params -> same result object). Not written to disk:

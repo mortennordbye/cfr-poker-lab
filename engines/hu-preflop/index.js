@@ -1,9 +1,8 @@
 'use strict';
 // Engine 'hu-preflop': heads-up preflop SB vs BB, ChipEV, CFR+. See README.md and CONTRACT.md.
-const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { Worker } = require('worker_threads');
+const { sha1, files } = require('../../lib/platform');
 const { VERSION, normalizeParams, spotKey, terminalName } = require('./solver');
 const realization = require('../../lib/realization');
 
@@ -38,7 +37,7 @@ function loadTable(P) {
     const t = realization.buildTable(spotKey(P), { rIp: P.rIp, rOop: P.rOop });
     if (t && Object.keys(t.terminals).length) return t;
   } catch (e) { console.error('hu-preflop: realization table failed:', e.message); }
-  try { return JSON.parse(fs.readFileSync(tableFile(P), 'utf8')); } catch (e) { return null; }
+  try { return JSON.parse(files.readText(tableFile(P))); } catch (e) { return null; }
 }
 
 // Per-terminal sample counts for the Solve tab: [{ key, name, flops, full, mass, m }], largest reach first.
@@ -63,7 +62,7 @@ function runWorker(P, onProgress, rTable) {
     w.on('message', (m) => {
       if (m.progress !== undefined) onProgress(m.progress, m.message);
       else if (m.error) reject(new Error(m.error));
-      else if (m.result) resolve(m.result);
+      else if (m.result) { resolve(m.result); w.terminate(); } // a browser worker does not stop by itself
     });
     w.on('error', reject);
     w.on('exit', (code) => { if (code !== 0) reject(new Error('worker exit ' + code)); });
@@ -77,7 +76,7 @@ function wrap(data) {
 function cacheFile(raw, rTable) {
   const P = normalizeParams(raw);
   const tv = rTable ? rTable.version || rTable.builtAt || 'table' : null; // new samples give a new cache entry
-  const hash = crypto.createHash('sha1').update(JSON.stringify({ v: VERSION, P, tv })).digest('hex').slice(0, 16);
+  const hash = sha1(JSON.stringify({ v: VERSION, P, tv })).slice(0, 16);
   return path.join(CACHE, `hu-preflop-${hash}.json`);
 }
 
@@ -85,9 +84,9 @@ async function solve(raw, onProgress = () => {}) {
   const P = normalizeParams(raw);
   const rTable = loadTable(P);
   const file = cacheFile(P, rTable);
-  if (fs.existsSync(file)) {
+  if (files.exists(file)) {
     try {
-      const data = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+      const data = JSON.parse(await files.readTextAsync(file));
       onProgress(1, 'loaded from cache');
       data.stats.cached = true;
       data.stats.calibration = calibrationInfo(P, data, rTable);
@@ -99,7 +98,7 @@ async function solve(raw, onProgress = () => {}) {
   let data;
   try { data = await runWorker(P, onProgress, rTable); } finally { release(); }
   onProgress(0.98, 'saving cache');
-  try { fs.mkdirSync(CACHE, { recursive: true }); await fs.promises.writeFile(file, JSON.stringify(data)); } catch (e) { /* cache is optional */ }
+  try { await files.writeTextAsync(file, JSON.stringify(data)); } catch (e) { /* cache is optional */ }
   data.stats.cached = false;
   data.stats.calibration = calibrationInfo(P, data, rTable);
   return wrap(data);

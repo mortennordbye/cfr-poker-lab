@@ -3,6 +3,7 @@
 // Pure functions: used by worker.js (in a worker thread) and by test.js.
 // Money: "bets" are street bets without antes. Utilities are SB's change in chips from the start of the hand.
 const { N, COMBOS, className } = require('../../lib/equity');
+const { sha1 } = require('../../lib/platform');
 
 const VERSION = 5; // 5: flop terminals carry name, spotKey and mass
 
@@ -389,7 +390,7 @@ function terminalName(key) {
 function spotKey(raw) {
   const P = normalizeParams(raw);
   const k = { stack: P.stack, ante: P.ante, sbOpen: P.sbOpen, limp: P.limp, isoSize: P.isoSize, threeBetX: P.threeBetX, fourBetX: P.fourBetX };
-  return require('crypto').createHash('sha1').update(JSON.stringify(k)).digest('hex').slice(0, 12);
+  return sha1(JSON.stringify(k)).slice(0, 12);
 }
 
 module.exports = { VERSION, normalizeParams, buildTree, solve, spotKey, terminalName, COMBOS };

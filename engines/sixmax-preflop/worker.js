@@ -4,8 +4,7 @@
 //                starts the helpers and packs the result.
 // role 'helper': owns some subtrees; runs one walk per command from the master.
 // Sync: SharedArrayBuffer + Atomics (one barrier per phase), results via MessageChannel.
-const { Worker, parentPort, workerData, MessageChannel, receiveMessageOnPort } = require('worker_threads');
-const path = require('path');
+const { Worker, parentPort, workerData, MessageChannel } = require('worker_threads');
 const { loadEquity } = require('../../lib/equity');
 const { buildTree } = require('./tree');
 const { Core, Ref, buildMatrices, PRIOR, H } = require('./core');
@@ -169,10 +168,13 @@ async function masterMain() {
   const ev = command(CMD_EVAL, 0);
   // Collect eval data from all threads.
   const evalData = new Map(core.evalOut);
+  // Each helper posts its eval data once. Received with an await (not receiveMessageOnPort), so this also runs
+  // in a browser Web Worker (tools/build-web.js).
+  const dumps = ports.map((port) => new Promise((resolve) => port.once('message', resolve)));
   Atomics.store(ctrl, C_DONE, 0); Atomics.store(ctrl, C_CMD, CMD_DUMP);
   Atomics.store(ctrl, C_GEN, ++gen); Atomics.notify(ctrl, C_GEN);
   waitDone(nThreads - 1);
-  for (const port of ports) { let m; while ((m = receiveMessageOnPort(port))) for (const [idx, d] of m.message) evalData.set(idx, d); }
+  for (const out of await Promise.all(dumps)) for (const [idx, d] of out) evalData.set(idx, d);
   let expl = 0;
   const gains = [];
   for (let b = 0; b < 6; b++) {

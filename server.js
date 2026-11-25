@@ -3,10 +3,9 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { loadEquity } = require('./lib/equity');
 const pushfold = require('./engines/pushfold/solver');
-const RZ = require('./lib/realization');
+const { createSolves } = require('./lib/solves');
 const { createIdleFiller } = require('./idle');
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -29,39 +28,20 @@ for (const dir of fs.readdirSync(path.join(__dirname, 'engines'))) {
   catch (err) { console.error(`engine ${dir} failed to load:`, err.message); }
 }
 
-const solves = new Map(); // solveId -> { status, progress, message, result, error, kind, source, sample }
-
 const idle = createIdleFiller({
   engines,
-  isBusy: () => [...solves.values()].some((j) => j.status === 'running'),
+  isBusy: () => solves.isBusy(),
   idleMs: Number(process.env.IDLE_MS) || 5 * 60e3,
   solveParams: process.env.IDLE_SOLVE_PARAMS ? JSON.parse(process.env.IDLE_SOLVE_PARAMS) : {}, // test override
   kind: process.env.IDLE_KIND || null, // test override; default 'postflop' if loaded, else 'postflop-js'
   settingsFile: path.join(__dirname, 'cache', 'idle.json'),
 });
 
-// A postflop solve started from a hu-preflop flop terminal (params.source) saves a realization sample.
-async function saveSample(job) {
-  const src = job.source, st = job.result && job.result.stats;
-  const P = { ...job.params, ...((job.result && job.result.params) || {}) };
-  const board = String(P.board || '').replace(/\s+/g, '');
-  if (!st || !st.rootEv) { job.sample = { error: 'engine gave no rootEv' }; return; }
-  if (board.length !== 6) { job.sample = { error: 'samples are for flop solves only' }; return; }
-  const oop = P.oop || 'BB', ip = P.ip || 'SB';
-  const ranges = job.params.ranges;
-  const eq = st.rootEq ? null : await RZ.flopEquitiesAsync(board, ranges, oop, ip);
-  const sample = RZ.makeSample({ terminalKey: src.terminalKey, board, pot: P.pot, ranges, stats: st, oop, ip, eq });
-  const file = RZ.saveSample(src.spotKey, sample);
-  job.sample = file ? { file: path.relative(__dirname, file), flops: RZ.sampleCount(src.spotKey, src.terminalKey) } : { skipped: 'a newer sample exists' };
-  console.log(`realization sample ${file ? 'saved: ' + path.relative(__dirname, file) : 'skipped (newer exists)'} (${src.terminalKey} ${board})`);
-}
-
-// Per-combo calibration data (rootEv, rootEq) is large and only used on the server: leave it out of status answers.
-function slimStats(st) {
-  if (!st || (!st.rootEv && !st.rootEq)) return st;
-  const { rootEv, rootEq, ...rest } = st;
-  return rest;
-}
+const solves = createSolves({
+  engines, maxSolves: MAX_SOLVES, maxPostflop: MAX_POSTFLOP_SOLVES,
+  onStart: (kind, params) => { if (kind === 'hu-preflop') idle.noteHuSpot(params); },
+  rel: (file) => path.relative(__dirname, file),
+});
 
 function json(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -93,53 +73,18 @@ loadEquity().then(({ E, W }) => {
       }
       if (p === '/api/solve' && req.method === 'POST') {
         const { kind, params = {} } = await readBody(req);
-        const engine = engines[kind];
-        if (!engine) return json(res, 400, { error: `unknown kind: ${kind}` });
-        const solveId = crypto.randomUUID();
-        const { source, ...engineParams } = params || {};
-        const src = source && source.kind === 'hu-preflop' && source.spotKey && source.terminalKey ? source : null;
-        if (kind === 'hu-preflop') idle.noteHuSpot(params);
-        const job = { kind, params, source: src, sample: null, status: 'running', progress: 0, message: 'starting', result: null, error: null };
-        solves.set(solveId, job);
-        // Keep memory bounded: a flop solve can use 1.5 to 3 GB. Drop the oldest finished solves,
-        // and (before a new postflop solve starts) the oldest finished postflop solves over their own limit.
-        const drop = (id, j) => {
-          solves.delete(id);
-          // Engines that hold resources (e.g. a solver process) free them here.
-          if (j.result && typeof j.result.dispose === 'function') { try { j.result.dispose(); } catch (e) { /* ignore */ } }
-        };
-        for (const [id, j] of solves) {
-          if (solves.size <= MAX_SOLVES) break;
-          if (j.status !== 'running') drop(id, j);
-        }
-        if (kind.startsWith('postflop')) {
-          const done = [...solves].filter(([id, j]) => id !== solveId && j.kind.startsWith('postflop') && j.status !== 'running');
-          // The new solve counts too, so keep MAX_POSTFLOP_SOLVES - 1 old ones.
-          for (const [id, j] of done.slice(0, Math.max(0, done.length - (MAX_POSTFLOP_SOLVES - 1)))) drop(id, j);
-        }
-        engine.solve(engineParams, (progress, message) => { job.progress = progress; if (message) job.message = message; })
-          .then(async (result) => {
-            job.result = result;
-            if (src) { try { await saveSample(job); } catch (e) { job.sample = { error: e.message }; console.error('realization sample failed:', e); } }
-            job.status = 'done'; job.progress = 1; job.message = 'done';
-          })
-          .catch((err) => { job.status = 'error'; job.error = String((err && err.stack) || err); console.error(err); });
-        return json(res, 200, { solveId });
+        try { return json(res, 200, { solveId: solves.start(kind, params) }); }
+        catch (e) { if (e.status === 400) return json(res, 400, { error: e.message }); throw e; }
       }
       let m = p.match(/^\/api\/solve\/([\w-]+)$/);
       if (m) {
-        const job = solves.get(m[1]);
-        if (!job) return json(res, 404, { error: 'no such solve' });
-        return json(res, 200, { kind: job.kind, params: job.params, status: job.status, progress: job.progress, message: job.message, error: job.error,
-          stats: job.result && slimStats(job.result.stats), root: job.result && job.result.root, sample: job.sample });
+        const st = solves.status(m[1]);
+        return st ? json(res, 200, st) : json(res, 404, { error: 'no such solve' });
       }
       m = p.match(/^\/api\/solve\/([\w-]+)\/node$/);
       if (m) {
-        const job = solves.get(m[1]);
-        if (!job || !job.result) return json(res, 404, { error: 'solve not ready' });
-        const node = await job.result.getNode(url.searchParams.get('id') || job.result.root); // may be sync or a Promise
-        if (!node) return json(res, 404, { error: 'no such node' });
-        return json(res, 200, node);
+        const r = await solves.node(m[1], url.searchParams.get('id'));
+        return json(res, r.status, r.node || { error: r.error });
       }
       if (p === '/api/pushfold') {
         const q = url.searchParams;
