@@ -49,6 +49,30 @@ jobs:
       - name: Postflop (Rust) tests
         run: node engines/postflop/test.js
 
+  # The WebAssembly builds of the Rust engine (browser mode). pages.yml builds them again for the deploy on main;
+  # this job finds a broken build on pull requests first.
+  wasm:
+    name: WebAssembly build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engines/postflop/rs
+          key: wasm
+      - name: Build WebAssembly
+        run: tools/build-wasm.sh
+      - name: Build static site
+        run: node tools/build-web.js dist
+        env:
+          WASM_REQUIRED: "1"
+
   # Multi-arch image: each platform builds on a native runner (no QEMU, so the Rust
   # build stays fast), pushes by digest, then `image` merges both into one tag.
   # On pull requests the image is built as a smoke test but not pushed.

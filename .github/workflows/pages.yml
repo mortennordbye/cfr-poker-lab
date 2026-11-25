@@ -1,6 +1,7 @@
 name: Pages
 
-# Builds the static site (browser mode: the JavaScript engines run in the page) and deploys it to GitHub Pages.
+# Builds the static site (browser mode: the engines run in the page, the Rust postflop engine as WebAssembly)
+# and deploys it to GitHub Pages.
 on:
   push:
     branches: [main]
@@ -17,7 +18,7 @@ jobs:
   build:
     name: Build site
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,8 +26,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+      # Caches the cargo registry, the build output and ~/.cargo/bin (wasm-bindgen-cli).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engines/postflop/rs
+          key: wasm
+      # Installs what is missing (pinned nightly + rust-src, wasm32 target, wasm-bindgen-cli), then builds mt and st.
+      - name: Build WebAssembly
+        run: tools/build-wasm.sh
       - name: Build
         run: node tools/build-web.js dist
+        env:
+          WASM_REQUIRED: "1"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
