@@ -62,7 +62,9 @@ number of raises). The default tree has 45 groups.
 - Flop terminals carry `spotKey`, `key` (node id), `group`, `name`, `mass` (share of all deals that reach it),
   `calibrated`. `stats.calibration` lists the groups (same shape as hu-preflop; `terminals` = 12 groups with most
   reach plus all groups with samples, `groups` = all).
-- Batch fill: `tools/calibrate-sixmax.js` (top groups by reach on the 20-flop subset, native Rust engine, resumable).
+- Batch fill: `tools/calibrate-sixmax.js` (top groups by reach on the 20-flop subset, native Rust engine). Round 1 takes
+  terminals and ranges from the flat preflop solve, which does not change when samples are added, so a run stopped by
+  `--budgetMin` resumes with the samples it saved.
 
 ## Algorithm
 

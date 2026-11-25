@@ -2,7 +2,7 @@
 // Calibrates equity realization per hand for the 6-max preflop engine (batch run).
 //
 // Loop:
-//   1. Solve preflop with engines/sixmax-preflop (round 1: the table from the samples that exist, or flat R).
+//   1. Solve preflop with engines/sixmax-preflop (round 1: flat R, see --start; later rounds: the calibrated table).
 //   2. Group the heads-up flop terminals into realization groups ('SRP BTN vs BB', pot type x IP x OOP) and pick
 //      the groups with the most reach (or the ones given with --group). In each group, take its terminals with the
 //      most reach (--terms).
@@ -15,8 +15,10 @@
 //
 // Usage: node tools/calibrate-sixmax.js [--dir <samples dir>] [spot: --stack 100 --ante 0 --open 0 ...]
 //        [--groups 8 | --group "3BP CO vs BB,4BP CO vs BB"] [--terms 1] [--flops 20] [--rounds 1]
-//        [--parallel 2] [--threads 6] [--target 1] [--maxSeconds 300] [--maxExpl 3] [--budgetMin 0] [--iterations 1000] [--dry]
+//        [--parallel 1] [--threads 4] [--target 1] [--maxSeconds 300] [--maxExpl 3] [--budgetMin 0] [--iterations 1000] [--start flat] [--dry]
 // --maxExpl: a solve that ends above this exploitability (% pot) is not saved, and such an old sample is solved again.
+// --start: preflop solve that gives the terminals and ranges of round 1: flat (default; stays the same while samples
+//          are added, so chunked runs resume) or calibrated (uses the samples that exist).
 // --dir: sample folder (default cache/realization-samples, the folder the server reads).
 const path = require('path');
 
@@ -38,9 +40,9 @@ for (const k of SPOT_KEYS) if (arg(k) !== undefined) spot[k] = arg(k);
 const OPT = {
   groups: Number(arg('groups', 8)), group: arg('group') ? String(arg('group')).split(',').map((s) => s.trim()).filter(Boolean) : null,
   terms: Number(arg('terms', 1)), flops: Number(arg('flops', 20)), rounds: Number(arg('rounds', 1)),
-  parallel: Number(arg('parallel', 2)), threads: Number(arg('threads', 6)), target: Number(arg('target', 1)),
+  parallel: Number(arg('parallel', 1)), threads: Number(arg('threads', 4)), target: Number(arg('target', 1)),
   maxSeconds: Number(arg('maxSeconds', 300)), maxExpl: Number(arg('maxExpl', 3)), budgetMin: Number(arg('budgetMin', 0)), iterations: Number(arg('iterations', 1000)),
-  dry: !!arg('dry', false),
+  start: String(arg('start', 'flat')), dry: !!arg('dry', false),
 };
 
 const P0 = six.normalizeParams(spot);
@@ -85,9 +87,14 @@ async function pool(items, n, fn) {
   const tStart = Date.now();
   log(`spot ${JSON.stringify(spot)} key ${KEY}; samples in ${RZ.spotDir(KEY)}; ${flops.length} flops, ${OPT.rounds} round(s), ` +
     `${OPT.parallel} parallel solves x ${OPT.threads} threads, target ${OPT.target}% pot${OPT.budgetMin ? `, budget ${OPT.budgetMin} min` : ''}`);
+  let stopped = false; // budget reached: no final solve, the next run goes on
   for (let round = 1; round <= OPT.rounds; round++) {
-    const sol = await six.solve({ ...spot, iterations: OPT.iterations }, () => {});
-    summary(sol, `round ${round} preflop`);
+    // Round 1 takes its terminals and ranges from the flat preflop solve (unless --start calibrated). That solve does
+    // not change when samples are added, so the ranges hash of each terminal stays the same and a run stopped by
+    // --budgetMin resumes with the samples it saved. Later rounds use the calibrated solve (new ranges, new samples).
+    const base = round === 1 && OPT.start !== 'calibrated' ? 'flat' : 'calibrated';
+    const sol = await six.solve({ ...spot, iterations: OPT.iterations, realization: base }, () => {});
+    summary(sol, `round ${round} preflop (${base})`);
     const terms = flopTerminals(sol);
     const gm = new Map();
     for (const t of terms) { const g = gm.get(t.group) || { group: t.group, mass: 0, terms: [] }; g.mass += t.mass; g.terms.push(t); gm.set(t.group, g); }
@@ -142,9 +149,9 @@ async function pool(items, n, fn) {
       log(`R ${g.group}: ${e.n} flops, m ${e.m} | ${e.ip} (IP) avg ${e[e.ip + 'avg']} [${show(e.ip)}] | ${e.oop} (OOP) avg ${e[e.oop + 'avg']} [${show(e.oop)}]`);
     }
     log(`round ${round}: table ${table ? table.version + ' (' + table.info + ')' : 'none'}`);
-    if (OPT.budgetMin && Date.now() - tStart > OPT.budgetMin * 60e3) break;
+    if (skipped) { stopped = true; break; }
   }
-  if (!OPT.dry) summary(await six.solve({ ...spot, iterations: OPT.iterations }, () => {}), 'final preflop (calibrated)');
+  if (!OPT.dry && !stopped) summary(await six.solve({ ...spot, iterations: OPT.iterations }, () => {}), 'final preflop (calibrated)');
   log(`done in ${((Date.now() - tStart) / 60e3).toFixed(1)} min`);
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
