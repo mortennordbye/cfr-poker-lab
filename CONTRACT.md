@@ -181,10 +181,10 @@ Input (`POST /api/report` body):
 // plus, for both:
   flops: 25 | 49 | 95,                         // lib/flops.js flopSubset(n); default 25
   tree: { flopBets, flopRaises, turnBets, turnRaises, riverBets, riverRaises, donkBets, raiseCap, allinSpr,
-          iterations, targetExploitability /* default 1 */, maxSeconds /* default 300 */, threads /* default 8 */ }
+          iterations, targetExploitability /* default 1 */, maxSeconds /* default 300 */, threads /* default 4 */ }
 ```
 
-- One postflop solve at a time (engine `postflop`, else `postflop-js`). Reports queue behind each other.
+- One postflop solve at a time (engine `postflop`, else `postflop-js`), 4 threads by default. Reports queue behind each other.
 - A flop from a `hu-preflop` terminal also saves a realization sample (same files as "Solve flop").
 - Storage: `cache/reports/<id>.json` (`REPORTS_DIR`), written after each flop. `id` = hash of the input without
   `threads`. The same input gives the same id: a stopped report continues, a finished one is returned as it is.

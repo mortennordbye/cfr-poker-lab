@@ -4,7 +4,7 @@
 //
 // Usage:
 //   node tools/flop-report.js --terminal 'SB:Raise 2.5/BB:Call' [--kind hu-preflop] [--params '{"stack":100}']
-//        [--flops 25] [--target 1] [--maxSeconds 300] [--threads 8] [--tree '{"flopBets":"33,75"}']
+//        [--flops 25] [--target 1] [--maxSeconds 300] [--threads 4] [--tree '{"flopBets":"33,75"}']
 //   node tools/flop-report.js --spot spot.json [--flops 25]       spot.json = { ranges, pot, stack, oop, ip }
 //   node tools/flop-report.js --list [--kind hu-preflop] [--params ...]   lists the flop terminals of the spot
 // Env: REPORTS_DIR (report files), REALIZATION_SAMPLES_DIR (samples).
