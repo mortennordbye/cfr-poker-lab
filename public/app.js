@@ -279,13 +279,15 @@
     renderRight();
   }
 
-  function streetCards(node, street) {
+  // all = every board card up to this street (first board column of a solve that starts on the turn or river).
+  function streetCards(node, street, all) {
     const b = node.board || [];
-    return street === 'flop' ? b.slice(0, 3) : street === 'turn' ? b.slice(3, 4) : street === 'river' ? b.slice(4, 5) : [];
+    const end = street === 'flop' ? 3 : street === 'turn' ? 4 : street === 'river' ? 5 : 0;
+    return all ? b.slice(0, end) : b.slice(Math.max(0, end === 3 ? 0 : end - 1), end);
   }
-  function boardCol(node, street) {
+  function boardCol(node, street, all) {
     const c = el('div', 'col board');
-    c.innerHTML = `<div class="hd"><span>${esc(street[0].toUpperCase() + street.slice(1))}</span><span class="st">${node.pot !== undefined ? esc(+node.pot.toFixed(2)) + ' bb' : ''}</span></div><div class="cards">${streetCards(node, street).map((x) => cardHtml(x)).join('')}</div>`;
+    c.innerHTML = `<div class="hd"><span>${esc(street[0].toUpperCase() + street.slice(1))}</span><span class="st">${node.pot !== undefined ? esc(+node.pot.toFixed(2)) + ' bb' : ''}</span></div><div class="cards">${streetCards(node, street, all).map((x) => cardHtml(x)).join('')}</div>`;
     return c;
   }
   function decisionCol(node, pos, chosenLabel, onClick, isCur) {
@@ -305,14 +307,23 @@
   function renderActionBar() {
     const bar = $('#actionbar'); bar.innerHTML = '';
     let prevStreet = null;
+    // A dealt card has no column of its own: the next street's board column shows it, and a click
+    // on that board column goes back to the card picker (pendingDeal).
+    let pendingDeal = null;
+    const addBoard = (node, street) => {
+      const bc = boardCol(node, street, prevStreet === null || prevStreet === 'preflop');
+      if (pendingDeal) { bc.onclick = pendingDeal; bc.title = 'Pick another card'; bc.classList.add('pick'); pendingDeal = null; }
+      bar.append(bc);
+    };
     const addCols = (frameSolveId, history, parentIdx) => {
       for (const h of history) {
         const key = frameSolveId + '|' + h.nodeId;
         const node = S.nodeVals.get(key);
         if (!node) continue;
-        if (node.street !== 'preflop' && node.street !== prevStreet) bar.append(boardCol(node, node.street));
-        prevStreet = node.street;
         const onClick = parentIdx === undefined ? () => go(h.nodeId) : () => goParent(parentIdx, h.nodeId);
+        if (h.type === 'deal' || (node.actions || []).some((a) => a.type === 'deal')) { pendingDeal = onClick; continue; }
+        if (node.street !== 'preflop' && node.street !== prevStreet) addBoard(node, node.street);
+        prevStreet = node.street;
         const col = decisionCol(node, h.pos, h.label, onClick, false);
         if (parentIdx !== undefined) col.classList.add('parent');
         bar.append(col);
@@ -321,7 +332,7 @@
     S.parents.forEach((p, i) => addCols(p.frame.solveId, p.node.history || [], i));
     addCols(S.frame.solveId, S.node.history || []);
     const n = S.node;
-    if (n.street !== 'preflop' && n.street !== prevStreet) bar.append(boardCol(n, n.street));
+    if (n.street !== 'preflop' && n.street !== prevStreet && !(n.actions || []).some((a) => a.type === 'deal')) addBoard(n, n.street);
     if (n.toAct) bar.append(decisionCol(n, n.toAct, null, null, true));
     else if (n.terminal) {
       const t = n.terminal.type;

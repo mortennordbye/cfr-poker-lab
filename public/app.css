@@ -49,6 +49,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; backg
 .col:hover { border-color: #4a4d58; }
 .col.cur { border-color: #6b6f7c; background: var(--panel2); cursor: default; }
 .col.parent { opacity: .6; }
+.col.board.pick:hover { border-color: #8a8f9c; }
 .col .hd { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 2px; }
 .col .hd .st { color: var(--muted); font-weight: 500; }
 .col .a { padding: 1px 5px; border-radius: 3px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
