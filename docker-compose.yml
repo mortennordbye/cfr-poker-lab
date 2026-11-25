@@ -10,8 +10,9 @@ services:
       # Solve caches and calibration samples survive restarts and image updates.
       - cfr_cache:/app/cache
     environment:
-      # A finished flop solve keeps ~1.6 GB in memory; keep 3 so they fit under mem_limit.
-      MAX_SOLVES: 3
+      # A finished flop solve keeps a solver process with 1.5 to 3 GB (wide preflop ranges).
+      # Keep only the newest one: the old one is freed before a new one starts, so they never add up.
+      MAX_POSTFLOP_SOLVES: 1
     # Reaps the solver child processes.
     init: true
     restart: unless-stopped

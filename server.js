@@ -14,6 +14,8 @@ const PORT = Number(process.env.PORT) || 8787;
 const HOST = process.env.HOST || '127.0.0.1';
 // Finished solves kept in memory (a flop solve holds ~1.6 GB). The container lowers this.
 const MAX_SOLVES = Math.max(1, Number(process.env.MAX_SOLVES) || 4);
+// Finished postflop solves kept (each holds a solver process with 1.5 to 3 GB). Default: no extra limit.
+const MAX_POSTFLOP_SOLVES = Math.max(1, Number(process.env.MAX_POSTFLOP_SOLVES) || Infinity);
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
@@ -99,14 +101,21 @@ loadEquity().then(({ E, W }) => {
         if (kind === 'hu-preflop') idle.noteHuSpot(params);
         const job = { kind, params, source: src, sample: null, status: 'running', progress: 0, message: 'starting', result: null, error: null };
         solves.set(solveId, job);
-        // Keep memory bounded: a flop solve can use ~1 GB. Drop the oldest finished solves.
+        // Keep memory bounded: a flop solve can use 1.5 to 3 GB. Drop the oldest finished solves,
+        // and (before a new postflop solve starts) the oldest finished postflop solves over their own limit.
+        const drop = (id, j) => {
+          solves.delete(id);
+          // Engines that hold resources (e.g. a solver process) free them here.
+          if (j.result && typeof j.result.dispose === 'function') { try { j.result.dispose(); } catch (e) { /* ignore */ } }
+        };
         for (const [id, j] of solves) {
           if (solves.size <= MAX_SOLVES) break;
-          if (j.status !== 'running') {
-            solves.delete(id);
-            // Engines that hold resources (e.g. a solver process) free them here.
-            if (j.result && typeof j.result.dispose === 'function') { try { j.result.dispose(); } catch (e) { /* ignore */ } }
-          }
+          if (j.status !== 'running') drop(id, j);
+        }
+        if (kind.startsWith('postflop')) {
+          const done = [...solves].filter(([id, j]) => id !== solveId && j.kind.startsWith('postflop') && j.status !== 'running');
+          // The new solve counts too, so keep MAX_POSTFLOP_SOLVES - 1 old ones.
+          for (const [id, j] of done.slice(0, Math.max(0, done.length - (MAX_POSTFLOP_SOLVES - 1)))) drop(id, j);
         }
         engine.solve(engineParams, (progress, message) => { job.progress = progress; if (message) job.message = message; })
           .then(async (result) => {
