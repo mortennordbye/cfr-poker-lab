@@ -41,3 +41,11 @@ test:
 # Run without Docker (needs Node 26, and Rust for the postflop engine)
 dev:
     node server.js
+
+# Download the precomputed data (release "data") into cache/; files that exist are kept
+data:
+    node tools/fetch-data.js
+
+# Same for Docker: into the cfr_cache volume (start the app again to see new samples in cached solves)
+data-docker:
+    docker compose run --rm --no-deps cfr-poker-lab node tools/fetch-data.js

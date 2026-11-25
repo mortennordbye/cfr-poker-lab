@@ -3,7 +3,10 @@
 // calls (CONTRACT.md) with the engines in Web Workers, through the same job code (lib/solves.js). The Rust engine
 // 'postflop' runs as WebAssembly (public/browser/postflop-backend.js), with the same default trees as local mode.
 // Not here: the idle filler (/api/idle answers 404, so the UI hides it).
+// Flop reports are read-only here: GET /api/reports and /api/report/:id answer from the precomputed data that the
+// Pages build puts in data/ (manifest.json, reports/<id>.json; tools/fetch-data.js). POST /api/report needs the server.
 const { createSolves } = require('../../lib/solves');
+const reportsLib = require('../../lib/reports');
 const { files } = require('../../lib/platform');
 const { loadEquity } = require('../../lib/equity');
 const pushfold = require('../../engines/pushfold/solver');
@@ -51,6 +54,30 @@ const engines = {
 // One finished solve at a time holds a postflop tree (up to 3.6 GB in a worker). Dropping it ends its worker.
 const solves = createSolves({ engines, maxSolves: 3, maxPostflop: 1 });
 
+// ---- precomputed reports (data/ next to the page) ----
+const dataUrl = (name) => new URL('data/' + name, (globalThis.document && document.baseURI) || globalThis.location.href).href;
+let manifestP = null;
+function manifest() {
+  if (!manifestP) manifestP = fetch(dataUrl('manifest.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return manifestP;
+}
+// Server shape (lib/reports.js statusOf); an incomplete report says so, it cannot be continued here.
+function readOnly(s) {
+  if (s.status === 'stopped') s.message = `precomputed: ${s.done} of ${s.total} flops (run it locally to finish)`;
+  return s;
+}
+async function reportList() {
+  const m = await manifest();
+  return m && Array.isArray(m.reports)
+    ? m.reports.map(({ flops, ...e }) => readOnly({ ...e, status: e.status === 'done' ? 'done' : 'stopped' })) : [];
+}
+async function reportStatus(id) {
+  const m = await manifest();
+  if (!/^[0-9a-f]{16}$/.test(id) || !m || !(m.reports || []).some((r) => r.id === id)) return null;
+  const res = await fetch(dataUrl(`reports/${id}.json`));
+  return res.ok ? readOnly(reportsLib.statusOf(await res.json())) : null;
+}
+
 function num(v, lo, hi, def) {
   const n = v === null || v === '' ? NaN : Number(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
@@ -74,6 +101,10 @@ async function handle(method, url, body) {
       iterations: Math.round(num(q.get('iterations'), 10, 50000, 3000)),
     })];
   }
+  if (p === '/api/reports' && method === 'GET') return [200, await reportList()];
+  if (p === '/api/report' && method === 'POST') return [404, { error: 'flop reports run in local mode only (node server.js or Docker); this page shows the precomputed ones' }];
+  m = p.match(/^\/api\/report\/([\w-]+)$/);
+  if (m && method === 'GET') { const r = await reportStatus(m[1]); return r ? [200, r] : [404, { error: 'no such report' }]; }
   return [404, { error: 'not available in browser mode: ' + p }];
 }
 
