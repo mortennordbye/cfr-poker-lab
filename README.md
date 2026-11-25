@@ -1,6 +1,8 @@
 <div align="center">
 
-# ♠️ cfr-poker-lab
+<img src="assets/icon.svg" alt="" width="112" height="112">
+
+# cfr-poker-lab
 
 ### A local poker study tool with CFR solvers and a strategy browser.
 
