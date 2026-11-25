@@ -65,6 +65,11 @@ number of raises). The default tree has 45 groups.
 - Batch fill: `tools/calibrate-sixmax.js` (top groups by reach on the 20-flop subset, native Rust engine). Round 1 takes
   terminals and ranges from the flat preflop solve, which does not change when samples are added, so a run stopped by
   `--budgetMin` resumes with the samples it saved.
+- Measured (2026-11-25, 4 efficiency cores): a flop solve takes 80-310 s in SRP pots, 5-90 s in 3-bet and 4-bet pots.
+  With 17 samples in the 5 largest cash groups, BTN opens 39.4% (flat 36.7%), UTG 18.1% (16.8%), SB 47.3% (50.1%).
+  MTT (ante 1, HJ 2.1, CO 3-bet 8.4), 10 samples in `4BP CO vs BB` and `3BP CO vs BB`: BB raises AA to 21 99.7%
+  (flat: allin 99.8%); BB total Fold 90.2 / Call 7.5 / Raise 21 2.3 / Allin 0.0 (flat 93.1 / 4.5 / 0.0 / 2.3).
+  Exploitability stays below 0.1% pot; share matrices 3.2 MB per thread for 5 groups.
 
 ## Algorithm
 

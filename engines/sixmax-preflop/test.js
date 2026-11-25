@@ -156,9 +156,9 @@ function allNodes(r) {
     `BTN AA ${e.BTN[ci('AA')]} (exp ${expAA.toFixed(4)}), BB KK ${e.BB[ci('KK')]} (exp ${expKK.toFixed(4)})`);
   check('group table: groups kept apart, samples without group ignored', Object.keys(gt.groups).length === 2 && gt.counts['3BP BB vs SB'] === 1 && /3 flop samples in 2 groups/.test(gt.info), gt.info);
   check('group sample count', RZ.groupSampleCount(SK, 'SRP BTN vs BB', o) === 2 && RZ.groupSampleCount(SK, 'none', o) === 0);
-  const bad = mk('T4', '8c5d2h', 3, 3, 'SRP CO vs BB', 'CO', 'BB');
-  bad.solver.exploitabilityPctPot = 20;
-  RZ.saveSample(SK, bad, o);
+  const unconv = mk('T4', '8c5d2h', 3, 3, 'SRP CO vs BB', 'CO', 'BB');
+  unconv.solver.exploitabilityPctPot = 20;
+  RZ.saveSample(SK, unconv, o);
   check('group table: a sample above 5% pot exploitability is left out', !RZ.buildGroupTable(SK, o).groups['SRP CO vs BB'] && !!RZ.buildGroupTable(SK, { ...o, maxExpl: 25 }).groups['SRP CO vs BB']);
   // Same terminal, new ranges: the old sample counts half (mismatch weight), the new one fully.
   const nw = mk('T1', '9c6d3h', 2.0, 0.7, 'SRP BTN vs BB', 'BTN', 'BB');
